@@ -1,0 +1,46 @@
+{
+    "name": "mrpc/xscraper",
+    "description": "Read x.com posts and their replies from PHP without the official API. Request-frugal: incremental refresh, smart caching, single-flight locking and a shared throttle.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["x.com", "twitter", "scraper", "replies", "graphql", "pramnos"],
+    "authors": [
+        {
+            "name": "mrpc",
+            "email": "mrpc@pramnoshosting.gr"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*",
+        "psr/simple-cache": "^2.0 || ^3.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5 || ^11.0",
+        "psr/http-client": "^1.0",
+        "psr/http-factory": "^1.0"
+    },
+    "suggest": {
+        "mrpc/pramnosframework": "Default HTTP transport (Pramnos\\Http\\Client) and a PSR-16 cache to share with your application",
+        "psr/http-client": "Use any PSR-18 HTTP client through Psr18Transport",
+        "psr/http-factory": "Required together with psr/http-client for Psr18Transport"
+    },
+    "autoload": {
+        "psr-4": {
+            "Mrpc\\XScraper\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Mrpc\\XScraper\\Tests\\": "tests/"
+        }
+    },
+    "bin": ["bin/xscraper"],
+    "scripts": {
+        "test": "phpunit"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
+}

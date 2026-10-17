@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -e
+
+# dockertest for xscraper - runs tests inside Docker container with code coverage >= 95% enforcement
+nobrowser=false
+coverage=true
+testdox=false
+passthrough=()
+
+for arg in "$@"; do
+    if [[ "$arg" == "--nobrowser" ]]; then
+        nobrowser=true
+    elif [[ "$arg" == "--coverage" ]]; then
+        coverage=true
+    elif [[ "$arg" == "--nocoverage" || "$arg" == "--no-coverage" ]]; then
+        coverage=false
+    elif [[ "$arg" == "--testdox" ]]; then
+        testdox=true
+    else
+        passthrough+=("$arg")
+    fi
+done
+
+# Concurrency lock
+LOCK_DIR="/tmp/dockertest-xscraper.lock.d"
+LOCK_PID_FILE="$LOCK_DIR/pid"
+
+_release_lock() { rm -rf "$LOCK_DIR"; }
+_acquire_lock() {
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        echo $$ >"$LOCK_PID_FILE"
+        return 0
+    fi
+    return 1
+}
+
+if ! _acquire_lock; then
+    existing_pid=$(cat "$LOCK_PID_FILE" 2>/dev/null || echo "")
+    if [[ -z "$existing_pid" ]] || ! kill -0 "$existing_pid" 2>/dev/null; then
+        echo "Stale lock detected (PID ${existing_pid:-unknown} gone). Clearing and proceeding." >&2
+        _release_lock
+        _acquire_lock || { echo "Could not acquire lock after clearing stale entry." >&2; exit 1; }
+    else
+        echo "Another ./dockertest run is already in progress (PID: ${existing_pid})." >&2
+        exit 1
+    fi
+fi
+
+trap '_release_lock' EXIT
+
+extra_flags=()
+if [[ "$testdox" == true ]]; then
+    extra_flags+=("--testdox")
+fi
+
+echo -e "\033[34m[dockertest] Running PHPUnit inside Docker container...\033[0m"
+
+if [[ "$coverage" == true ]]; then
+    docker compose run --rm -T \
+        -e XDEBUG_MODE=coverage \
+        php-environment \
+        php -d memory_limit=512M vendor/bin/phpunit \
+        --configuration phpunit.xml \
+        --coverage-html coverage \
+        --coverage-clover coverage/clover.xml \
+        "${extra_flags[@]}" \
+        "${passthrough[@]}"
+    test_status=$?
+
+    if [[ $test_status -ne 0 ]]; then
+        echo -e "\033[31m[dockertest] Tests failed with exit status ${test_status}\033[0m"
+        exit $test_status
+    fi
+
+    # Verify coverage >= 95%
+    if [[ -f "coverage/clover.xml" ]]; then
+        echo -e "\033[34m[dockertest] Checking code coverage threshold (>= 95%)...\033[0m"
+        coverage_pct=$(php -r '
+            $xml = @simplexml_load_file("coverage/clover.xml");
+            if (!$xml) { echo "0"; exit(1); }
+            $metrics = $xml->project->metrics;
+            $elements = (int)$metrics["elements"];
+            $covered = (int)$metrics["coveredelements"];
+            $lines = (int)$metrics["loc"];
+            $statements = (int)$metrics["statements"];
+            $coveredStatements = (int)$metrics["coveredstatements"];
+            $pct = $statements > 0 ? ($coveredStatements / $statements) * 100 : 0;
+            printf("%.2f", $pct);
+        ')
+
+        is_passed=$(php -r "echo ((float)'$coverage_pct' >= 95.0) ? '1' : '0';")
+
+        if [[ "$is_passed" == "1" ]]; then
+            echo -e "\033[32m[dockertest] SUCCESS: Statement coverage is ${coverage_pct}% (>= 95.0% requirement met).\033[0m"
+        else
+            echo -e "\033[31m[dockertest] FAIL: Statement coverage is ${coverage_pct}%, which is below the required 95.0% threshold!\033[0m"
+            exit 1
+        fi
+    fi
+else
+    docker compose run --rm -T \
+        -e XDEBUG_MODE=off \
+        php-environment \
+        php -d memory_limit=512M vendor/bin/phpunit \
+        --configuration phpunit.xml \
+        --no-coverage \
+        "${extra_flags[@]}" \
+        "${passthrough[@]}"
+    test_status=$?
+
+    if [[ $test_status -ne 0 ]]; then
+        echo -e "\033[31m[dockertest] Tests failed with exit status ${test_status}\033[0m"
+        exit $test_status
+    fi
+fi
+
+echo -e "\033[32m[dockertest] All checks passed successfully.\033[0m"
+exit 0

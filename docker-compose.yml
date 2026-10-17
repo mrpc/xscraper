@@ -1,0 +1,12 @@
+services:
+  php-environment:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pramnosframework-php-apache-environment:latest
+    container_name: xscraper_php
+    volumes:
+      - .:/var/www/html
+    working_dir: /var/www/html
+    environment:
+      - XDEBUG_MODE=coverage

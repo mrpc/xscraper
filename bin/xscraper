@@ -1,0 +1,261 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+// Locate autoloader
+$autoloadPaths = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+$loaded = false;
+foreach ($autoloadPaths as $path) {
+    if (file_exists($path)) {
+        require_once $path;
+        $loaded = true;
+        break;
+    }
+}
+
+if (!$loaded) {
+    fwrite(STDERR, "Error: Composer autoloader not found. Run 'composer install'.\n");
+    exit(1);
+}
+
+use Mrpc\XScraper\Exception\AuthenticationException;
+use Mrpc\XScraper\Exception\RateLimitException;
+use Mrpc\XScraper\Exception\TweetNotFoundException;
+use Mrpc\XScraper\Exception\XScraperException;
+use Mrpc\XScraper\FetchMode;
+use Mrpc\XScraper\Http\CurlTransport;
+use Mrpc\XScraper\Http\PramnosTransport;
+use Mrpc\XScraper\Model\Conversation;
+use Mrpc\XScraper\Model\Tweet;
+use Mrpc\XScraper\Session;
+use Mrpc\XScraper\Snowflake;
+use Mrpc\XScraper\XScraper;
+use Pramnos\Http\Client as PramnosHttpClient;
+
+function printUsage(): void
+{
+    echo <<<USAGE
+xscraper - Read x.com posts and replies without the official API.
+
+Usage:
+  bin/xscraper get <post-id-or-url> [options]
+
+Options:
+  --mode=smart|cache|refresh|full  Fetch strategy (default: smart)
+  --max-replies=N                  Maximum replies to retrieve (default: 50)
+  --json                           Output result as raw JSON
+  --output=FILE                    Save output to a file instead of stdout
+  --auth-token=TOKEN               X auth_token cookie
+  --ct0=CT0                        X ct0 cookie (CSRF token)
+  --cookie-header=HEADER           Raw Cookie header containing auth_token and ct0
+  --proxy=URL                      Outbound HTTP/SOCKS proxy
+  --storage-dir=DIR                Directory for cache, locks and throttle state
+  -h, --help                       Show this help message
+
+Environment variables:
+  X_AUTH_TOKEN, X_CT0, X_COOKIES, HTTPS_PROXY
+
+USAGE;
+}
+
+$argvCopy = $argv;
+array_shift($argvCopy);
+
+if (empty($argvCopy) || in_array('-h', $argvCopy, true) || in_array('--help', $argvCopy, true)) {
+    printUsage();
+    exit(0);
+}
+
+$command = array_shift($argvCopy);
+if ($command !== 'get') {
+    // If first argument is a tweet URL or ID directly
+    if (str_starts_with($command, 'http') || ctype_digit($command)) {
+        $target = $command;
+    } else {
+        fwrite(STDERR, "Unknown command '{$command}'. Run with --help for usage.\n");
+        exit(1);
+    }
+} else {
+    $target = array_shift($argvCopy) ?? '';
+}
+
+if ($target === '') {
+    fwrite(STDERR, "Error: Missing post ID or URL.\n");
+    printUsage();
+    exit(1);
+}
+
+// Parse options
+$options = [
+    'mode' => 'smart',
+    'max-replies' => 50,
+    'json' => false,
+    'output' => null,
+    'auth-token' => null,
+    'ct0' => null,
+    'cookie-header' => null,
+    'proxy' => null,
+    'storage-dir' => null,
+];
+
+foreach ($argvCopy as $arg) {
+    if ($arg === '--json') {
+        $options['json'] = true;
+    } elseif (str_starts_with($arg, '--mode=')) {
+        $options['mode'] = substr($arg, 7);
+    } elseif (str_starts_with($arg, '--max-replies=')) {
+        $options['max-replies'] = (int) substr($arg, 14);
+    } elseif (str_starts_with($arg, '--output=')) {
+        $options['output'] = substr($arg, 9);
+    } elseif (str_starts_with($arg, '--auth-token=')) {
+        $options['auth-token'] = substr($arg, 13);
+    } elseif (str_starts_with($arg, '--ct0=')) {
+        $options['ct0'] = substr($arg, 6);
+    } elseif (str_starts_with($arg, '--cookie-header=')) {
+        $options['cookie-header'] = substr($arg, 16);
+    } elseif (str_starts_with($arg, '--proxy=')) {
+        $options['proxy'] = substr($arg, 8);
+    } elseif (str_starts_with($arg, '--storage-dir=')) {
+        $options['storage-dir'] = substr($arg, 14);
+    }
+}
+
+// Build session
+try {
+    if ($options['cookie-header'] !== null) {
+        $session = Session::fromCookieHeader($options['cookie-header']);
+    } elseif ($options['auth-token'] !== null && $options['ct0'] !== null) {
+        $session = new Session($options['auth-token'], $options['ct0']);
+    } else {
+        $session = Session::fromEnvironment();
+    }
+} catch (\Throwable $e) {
+    fwrite(STDERR, "Authentication error: " . $e->getMessage() . "\n");
+    fwrite(STDERR, "Provide --auth-token and --ct0, or set X_AUTH_TOKEN and X_CT0 environment variables.\n");
+    exit(2);
+}
+
+$fetchMode = match (strtolower((string) $options['mode'])) {
+    'cache' => FetchMode::CacheOnly,
+    'refresh' => FetchMode::Refresh,
+    'full' => FetchMode::Full,
+    default => FetchMode::Smart,
+};
+
+// Build scraper instance
+$proxy = $options['proxy'] ?? getenv('HTTPS_PROXY') ?: getenv('https_proxy') ?: null;
+$scraper = XScraper::create(
+    $session,
+    storageDir: $options['storage-dir'],
+    proxy: is_string($proxy) && $proxy !== '' ? $proxy : null,
+);
+
+$startTime = microtime(true);
+
+try {
+    $conversation = $scraper->getConversation(
+        $target,
+        mode: $fetchMode,
+        maxReplies: max(0, (int) $options['max-replies']),
+    );
+} catch (AuthenticationException $e) {
+    fwrite(STDERR, "Authentication failed: " . $e->getMessage() . "\n");
+    exit(2);
+} catch (RateLimitException $e) {
+    fwrite(STDERR, "Rate limit: " . $e->getMessage() . " (retry after " . $e->retryAfter() . "s)\n");
+    exit(3);
+} catch (TweetNotFoundException $e) {
+    fwrite(STDERR, "Error: " . $e->getMessage() . "\n");
+    exit(1);
+} catch (XScraperException $e) {
+    fwrite(STDERR, "Scraper error: " . $e->getMessage() . "\n");
+    exit(1);
+} catch (\Throwable $e) {
+    fwrite(STDERR, "Unexpected error: " . $e->getMessage() . "\n");
+    exit(1);
+}
+
+$duration = round(microtime(true) - $startTime, 2);
+
+// Output
+if ($options['json']) {
+    $json = json_encode($conversation->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($options['output'] !== null) {
+        file_put_contents($options['output'], $json . "\n");
+    } else {
+        echo $json . "\n";
+    }
+    exit(0);
+}
+
+// Formatted CLI view
+$buffer = '';
+$t = $conversation->tweet;
+$author = $t->user->name ?? $t->user->screenName ?? 'Unknown';
+$handle = $t->user->screenName ? '@' . $t->user->screenName : '';
+$verified = $t->user->verified ? ' [✓]' : '';
+$dateStr = $t->createdAt ? $t->createdAt->format('Y-m-d H:i:s') : 'Unknown date';
+
+$buffer .= "\n======================================================================\n";
+$buffer .= "POST: {$t->url()}\n";
+$buffer .= "AUTHOR: {$author} {$handle}{$verified}\n";
+$buffer .= "DATE: {$dateStr} (ID: {$t->id})\n";
+$buffer .= "----------------------------------------------------------------------\n";
+$buffer .= wordwrap($t->text, 70) . "\n";
+
+if (!empty($t->media)) {
+    $buffer .= "\nATTACHMENTS:\n";
+    foreach ($t->media as $m) {
+        $buffer .= "  * [{$m->type}] {$m->url}\n";
+    }
+}
+
+$buffer .= "----------------------------------------------------------------------\n";
+$buffer .= sprintf(
+    "METRICS: %d likes | %d reposts | %d replies | %d quotes | %s views\n",
+    $t->likes,
+    $t->retweets,
+    $t->replies,
+    $t->quotes,
+    $t->views !== null ? (string) $t->views : '-',
+);
+$buffer .= "======================================================================\n";
+
+if ($conversation->replyCount() > 0) {
+    $buffer .= sprintf("\nREPLIES (%d collected):\n\n", $conversation->replyCount());
+    foreach ($conversation->replies as $i => $r) {
+        $rAuthor = $r->user->name ?? $r->user->screenName ?? 'Unknown';
+        $rHandle = $r->user->screenName ? '@' . $r->user->screenName : '';
+        $rDate = $r->createdAt ? $r->createdAt->format('m-d H:i') : '';
+        $replyPrefix = $r->isReplyTo($t->id) ? '  ↳ ' : '    ↳↳ ';
+        $buffer .= sprintf("%s[%d] %s %s (%s):\n", $replyPrefix, $i + 1, $rAuthor, $rHandle, $rDate);
+        $indentedText = preg_replace('/^/m', '       ', wordwrap($r->text, 65));
+        $buffer .= $indentedText . "\n\n";
+    }
+} else {
+    $buffer .= "\nNo replies collected.\n";
+}
+
+$stats = $conversation->stats;
+$buffer .= "----------------------------------------------------------------------\n";
+$buffer .= sprintf(
+    "STATS: %d requests, %d pages | New replies: %d | Source: %s | Time: %ss\n",
+    $stats?->requests ?? 0,
+    $stats?->pages ?? 0,
+    $stats?->newReplies ?? 0,
+    $stats?->fromCache ? ($stats->coalesced ? 'cache (coalesced)' : 'cache (fresh)') : 'network',
+    $duration,
+);
+$buffer .= "======================================================================\n\n";
+
+if ($options['output'] !== null) {
+    file_put_contents($options['output'], $buffer);
+} else {
+    echo $buffer;
+}
+
+exit(0);
