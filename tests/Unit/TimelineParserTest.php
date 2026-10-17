@@ -160,15 +160,20 @@ final class TimelineParserTest extends TestCase
         ];
     }
 
+    /**
+     * Verifies parsing full GraphQL TweetDetail conversation response including focal tweet, media, and replies.
+     */
     public function testParseTweetDetailComplete(): void
     {
+        // Arrange
         $parser = new TimelineParser();
         $focalId = '1845187747970863384';
         $json = $this->sampleGraphqlResponse($focalId);
 
+        // Act
         $result = $parser->parseTweetDetail($json, $focalId);
 
-        // Focal tweet
+        // Assert (focal tweet)
         $this->assertNotNull($result->focalTweet);
         $this->assertSame($focalId, $result->focalTweet->id);
         $this->assertSame('Full longform text overriding truncated full_text', $result->focalTweet->text);
@@ -177,41 +182,52 @@ final class TimelineParserTest extends TestCase
         $this->assertSame(45000, $result->focalTweet->views);
         $this->assertSame('999888', $result->focalTweet->quotedId);
 
-        // Media
+        // Assert (media with highest bitrate video selection)
         $this->assertCount(1, $result->focalTweet->media);
         $media = $result->focalTweet->media[0];
         $this->assertSame('video', $media->type);
-        $this->assertSame('https://video.twimg.com/high.mp4', $media->url); // Selected highest bitrate
+        $this->assertSame('https://video.twimg.com/high.mp4', $media->url);
         $this->assertSame('A video alt text', $media->altText);
 
-        // Entities
+        // Assert (entities)
         $this->assertSame(['https://example.com/cool'], $result->focalTweet->urls);
         $this->assertSame(['cool'], $result->focalTweet->hashtags);
         $this->assertSame(['someone'], $result->focalTweet->mentions);
 
-        // Replies
+        // Assert (replies)
         $this->assertCount(1, $result->replies);
         $reply = $result->replies[0];
         $this->assertSame('201', $reply->id);
         $this->assertSame('Direct reply text', $reply->text);
         $this->assertTrue($reply->isReplyTo($focalId));
 
-        // Cursor
+        // Assert (pagination cursor)
         $this->assertSame('next_cursor_token_abc', $result->bottomCursor);
     }
 
+    /**
+     * Verifies that empty or malformed GraphQL responses return an empty result without throwing.
+     */
     public function testParseEmptyOrMalformed(): void
     {
+        // Arrange
         $parser = new TimelineParser();
+
+        // Act
         $res = $parser->parseTweetDetail([], '123');
 
+        // Assert
         $this->assertNull($res->focalTweet);
         $this->assertEmpty($res->replies);
         $this->assertNull($res->bottomCursor);
     }
 
+    /**
+     * Verifies fallback parsing when tweet is returned in standalone tweetResult structure.
+     */
     public function testParseStandaloneTweetResult(): void
     {
+        // Arrange
         $parser = new TimelineParser();
         $json = [
             'data' => [
@@ -228,13 +244,20 @@ final class TimelineParserTest extends TestCase
             ],
         ];
 
+        // Act
         $res = $parser->parseTweetDetail($json, '555');
+
+        // Assert
         $this->assertNotNull($res->focalTweet);
         $this->assertSame('555', $res->focalTweet->id);
     }
 
+    /**
+     * Verifies parsing module reply items from TimelineAddToModule instructions and top cursors.
+     */
     public function testParseTimelineAddToModuleAndTopCursor(): void
     {
+        // Arrange
         $parser = new TimelineParser();
         $json = [
             'data' => [
@@ -278,14 +301,21 @@ final class TimelineParserTest extends TestCase
             ],
         ];
 
+        // Act
         $res = $parser->parseTweetDetail($json, '999');
+
+        // Assert
         $this->assertCount(1, $res->replies);
         $this->assertSame('301', $res->replies[0]->id);
         $this->assertSame('top_cursor_val', $res->topCursor);
     }
 
+    /**
+     * Verifies parsing photo media, ISO date formats, and quoted tweet IDs.
+     */
     public function testParsePhotoMediaAndQuotedResult(): void
     {
+        // Arrange
         $parser = new TimelineParser();
         $node = [
             '__typename' => 'Tweet',
@@ -310,7 +340,10 @@ final class TimelineParserTest extends TestCase
             ],
         ];
 
+        // Act
         $tweet = $parser->parseTweetNode($node);
+
+        // Assert
         $this->assertNotNull($tweet);
         $this->assertSame('400', $tweet->id);
         $this->assertSame('quoted_rest_id_123', $tweet->quotedId);
@@ -320,8 +353,12 @@ final class TimelineParserTest extends TestCase
         $this->assertNotNull($tweet->createdAt);
     }
 
+    /**
+     * Verifies that unparseable date strings return null createdAt rather than failing.
+     */
     public function testParseInvalidDateReturnsNull(): void
     {
+        // Arrange
         $parser = new TimelineParser();
         $node = [
             '__typename' => 'Tweet',
@@ -332,13 +369,20 @@ final class TimelineParserTest extends TestCase
             ],
         ];
 
+        // Act
         $tweet = $parser->parseTweetNode($node);
+
+        // Assert
         $this->assertNotNull($tweet);
         $this->assertNull($tweet->createdAt);
     }
 
+    /**
+     * Verifies parsing nested cursor entries inside both single items and module wrappers.
+     */
     public function testParseModuleCursorAndItemCursor(): void
     {
+        // Arrange
         $parser = new TimelineParser();
         $json = [
             'data' => [
@@ -382,13 +426,20 @@ final class TimelineParserTest extends TestCase
             ],
         ];
 
+        // Act
         $res = $parser->parseTweetDetail($json, '111');
+
+        // Assert
         $this->assertSame('item_top_cursor', $res->topCursor);
         $this->assertSame('module_bottom_cursor', $res->bottomCursor);
     }
 
+    /**
+     * Verifies parsing animated GIF media and selecting its video MP4 stream URL.
+     */
     public function testParseAnimatedGifMedia(): void
     {
+        // Arrange
         $parser = new TimelineParser();
         $node = [
             '__typename' => 'Tweet',
@@ -411,10 +462,65 @@ final class TimelineParserTest extends TestCase
             ],
         ];
 
+        // Act
         $tweet = $parser->parseTweetNode($node);
+
+        // Assert
         $this->assertNotNull($tweet);
         $this->assertCount(1, $tweet->media);
         $this->assertSame('animated_gif', $tweet->media[0]->type);
         $this->assertSame('https://video.twimg.com/gif.mp4', $tweet->media[0]->url);
     }
+
+    /**
+     * Verifies parsing of TimelineTimelineCursor items within single entries.
+     */
+    public function testParseTimelineTimelineCursorSingleItem(): void
+    {
+        // Arrange
+        $parser = new TimelineParser();
+        $json = [
+            'data' => [
+                'threaded_conversation_with_injections_v2' => [
+                    'instructions' => [
+                        [
+                            'type' => 'TimelineAddEntries',
+                            'entries' => [
+                                [
+                                    'entryId' => 'cursor-bottom-123',
+                                    'content' => [
+                                        'entryType' => 'TimelineTimelineItem',
+                                        'itemContent' => [
+                                            'itemType' => 'TimelineTimelineCursor',
+                                            'cursorType' => 'Bottom',
+                                            'value' => 'bottom_cursor_token_456',
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'entryId' => 'cursor-top-123',
+                                    'content' => [
+                                        'entryType' => 'TimelineTimelineItem',
+                                        'itemContent' => [
+                                            'itemType' => 'TimelineTimelineCursor',
+                                            'cursorType' => 'Top',
+                                            'value' => 'top_cursor_token_789',
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        // Act
+        $res = $parser->parseTweetDetail($json, '999');
+
+        // Assert
+        $this->assertSame('bottom_cursor_token_456', $res->bottomCursor);
+        $this->assertSame('top_cursor_token_789', $res->topCursor);
+    }
 }
+

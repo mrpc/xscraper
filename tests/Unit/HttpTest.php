@@ -21,24 +21,29 @@ use Psr\Http\Message\StreamInterface;
 
 final class HttpTest extends TestCase
 {
+    /**
+     * Verifies BrowserProfile header generation and ordering for Linux and Windows profiles.
+     */
     public function testBrowserProfileChromeLinuxAndWindows(): void
     {
+        // Arrange
         $linux = BrowserProfile::chromeLinux();
+        $win = BrowserProfile::chromeWindows();
+
+        // Act & Assert (User agent and client hints)
         $this->assertStringContainsString('Linux', $linux->userAgent);
         $this->assertArrayHasKey('sec-ch-ua-platform', $linux->clientHints);
-
-        $win = BrowserProfile::chromeWindows();
         $this->assertStringContainsString('Windows', $win->userAgent);
 
-        // apiHeaders order and content
+        // Act (apiHeaders generation)
         $apiHeaders = $linux->apiHeaders('bearer123', 'ct0val', 'authval', 'https://x.com/ref');
         $headerNames = array_column($apiHeaders, 0);
 
+        // Assert (apiHeaders content)
         $this->assertContains('x-csrf-token', $headerNames);
         $this->assertContains('authorization', $headerNames);
         $this->assertContains('cookie', $headerNames);
 
-        // Verify cookie header value
         $cookieHeader = null;
         foreach ($apiHeaders as [$k, $v]) {
             if ($k === 'cookie') {
@@ -48,48 +53,73 @@ final class HttpTest extends TestCase
         }
         $this->assertSame('auth_token=authval; ct0=ct0val', $cookieHeader);
 
-        // documentHeaders
+        // Act & Assert (documentHeaders)
         $docHeaders = $linux->documentHeaders('ct0val', 'authval', script: false);
         $this->assertNotEmpty($docHeaders);
         $scriptHeaders = $linux->documentHeaders('ct0val', 'authval', script: true);
         $this->assertNotEmpty($scriptHeaders);
     }
 
+    /**
+     * Verifies HttpRequest header map creation and HttpResponse status/JSON decoding.
+     */
     public function testHttpRequestAndResponse(): void
     {
+        // Arrange
         $req = new HttpRequest('GET', 'https://api.x.com/data', [['x-header', 'foo'], ['accept', '*/*']]);
+
+        // Act & Assert (request headers map)
         $this->assertSame('GET', $req->method);
         $map = $req->headerMap();
         $this->assertSame('foo', $map['x-header']);
         $this->assertSame('*/*', $map['accept']);
 
+        // Arrange (response)
         $res = new HttpResponse(200, ['content-type' => 'application/json', 'x-custom' => 'bar'], '{"status":"ok"}');
+        $badRes = new HttpResponse(500, [], 'not json');
+
+        // Act & Assert (response parsing)
         $this->assertSame(200, $res->status);
         $this->assertSame('bar', $res->header('X-Custom'));
         $this->assertSame('', $res->header('missing'));
         $this->assertSame(['status' => 'ok'], $res->json());
-
-        $badRes = new HttpResponse(500, [], 'not json');
         $this->assertNull($badRes->json());
     }
 
+    /**
+     * Verifies that CurlTransport throws TransportException on connection failure.
+     */
     public function testCurlTransportThrowsOnInvalidUrl(): void
     {
+        // Arrange
         $transport = new CurlTransport(connectTimeout: 2, proxy: 'http://127.0.0.1:9999');
         $req = new HttpRequest('GET', 'http://invalid.domain.that.does.not.exist.example:81', timeout: 1);
 
+        // Assert
         $this->expectException(TransportException::class);
+
+        // Act
         $transport->send($req);
     }
 
+    /**
+     * Verifies that invalid proxy URL format throws InvalidArgumentException.
+     */
     public function testPramnosTransportProxyValidation(): void
     {
+        // Arrange & Assert
         $this->expectException(InvalidArgumentException::class);
+
+        // Act
         PramnosTransport::withProxy('invalid proxy string');
     }
 
+    /**
+     * Verifies successful request execution and response mapping using Psr18Transport adapter.
+     */
     public function testPsr18TransportSuccess(): void
     {
+        // Arrange
         $psrClient = $this->createMock(ClientInterface::class);
         $reqFactory = $this->createMock(RequestFactoryInterface::class);
         $psrReq = $this->createMock(RequestInterface::class);
@@ -128,33 +158,45 @@ final class HttpTest extends TestCase
             ->willReturn($psrRes);
 
         $transport = new Psr18Transport($psrClient, $reqFactory);
+
+        // Act
         $response = $transport->send(new HttpRequest('GET', 'https://x.com/test', [['accept', 'json']]));
 
+        // Assert
         $this->assertSame(200, $response->status);
         $this->assertSame(['ok' => true], $response->json());
     }
 
+    /**
+     * Verifies that ClientExceptionInterface during PSR-18 call is converted to TransportException.
+     */
     public function testPsr18TransportError(): void
     {
+        // Arrange
         $psrClient = $this->createMock(ClientInterface::class);
         $reqFactory = $this->createMock(RequestFactoryInterface::class);
         $psrReq = $this->createMock(RequestInterface::class);
-
         $reqFactory->method('createRequest')->willReturn($psrReq);
 
         $exception = new class ('Network error') extends \Exception implements ClientExceptionInterface {
         };
-
         $psrClient->method('sendRequest')->willThrowException($exception);
 
         $transport = new Psr18Transport($psrClient, $reqFactory);
 
+        // Assert
         $this->expectException(TransportException::class);
+
+        // Act
         $transport->send(new HttpRequest('GET', 'https://x.com/test'));
     }
 
+    /**
+     * Verifies real HTTP operations with CurlTransport across GET, POST, custom verbs, and truncation.
+     */
     public function testCurlTransportRealRequests(): void
     {
+        // Arrange
         $port = 18991;
         $docRoot = realpath(__DIR__ . '/../../');
         $pid = exec("php -S 127.0.0.1:{$port} -t " . escapeshellarg($docRoot) . " > /dev/null 2>&1 & echo $!");
@@ -163,30 +205,32 @@ final class HttpTest extends TestCase
         try {
             $transport = new CurlTransport(connectTimeout: 2);
 
-            // 1. GET
+            // Act & Assert (GET)
             $reqGet = new HttpRequest('GET', "http://127.0.0.1:{$port}/composer.json", [['Accept', 'application/json']]);
             $resGet = $transport->send($reqGet);
             $this->assertSame(200, $resGet->status);
             $this->assertFalse($resGet->truncated);
             $this->assertNotEmpty($resGet->body);
 
-            // 2. POST
+            // Act & Assert (POST)
             $reqPost = new HttpRequest('POST', "http://127.0.0.1:{$port}/composer.json");
             $resPost = $transport->send($reqPost);
             $this->assertSame(200, $resPost->status);
 
-            // 3. Custom method
+            // Act & Assert (Custom method PUT)
             $reqPut = new HttpRequest('PUT', "http://127.0.0.1:{$port}/composer.json");
             $resPut = $transport->send($reqPut);
             $this->assertSame(405, $resPut->status);
 
-            // 4. Truncation
+            // Act & Assert (Truncation)
             $reqTrunc = new HttpRequest('GET', "http://127.0.0.1:{$port}/composer.json", maxBodyBytes: 50);
             $resTrunc = $transport->send($reqTrunc);
             $this->assertTrue($resTrunc->truncated);
             $this->assertSame(50, strlen($resTrunc->body));
         } finally {
+            // Cleanup
             exec("kill {$pid} 2>/dev/null");
         }
     }
 }
+

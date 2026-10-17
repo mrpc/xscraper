@@ -12,7 +12,7 @@ Designed for high-efficiency operations:
 - **Single-Flight Locking:** Prevents duplicate concurrent requests across multiple PHP worker processes using cross-process mutex locks (`flock`).
 - **Shared Request Throttle:** Cross-process pacing with randomized jitter (1.5s - 4.5s), tracking `x-rate-limit-remaining` headers and applying a 15-minute session cooldown on HTTP 429.
 - **Consistent Browser Fingerprints:** Maintains strict Chromium header order, fetch metadata, and dynamic CSRF token binding (`ct0`).
-- **Pluggable Transports:** Built-in adapters for `Pramnos\Http\Client` (`mrpc/pramnosframework`), any PSR-18 client, or native `ext-curl`.
+- **Pluggable Transports & Cache:** Built-in adapters for `Pramnos\Http\Client` and `Pramnos\Cache\Cache` (`mrpc/pramnosframework`), any PSR-18 client, PSR-16 cache, or native `ext-curl` with local file cache.
 - **Outbound Proxy Support:** Works seamlessly with HTTP, HTTPS, and SOCKS5 proxies.
 
 ---
@@ -25,7 +25,7 @@ Designed for high-efficiency operations:
 
 Optional:
 - `ext-curl` (for built-in `CurlTransport`)
-- `mrpc/pramnosframework` (for `PramnosTransport`)
+- `mrpc/pramnosframework` (for native `PramnosTransport` and `PramnosCache`)
 - `psr/http-client` and `psr/http-factory` (for `Psr18Transport`)
 
 ---
@@ -77,10 +77,12 @@ use Mrpc\XScraper\XScraper;
 $session = Session::fromEnvironment();
 
 // Create scraper with persistent cache, locks and throttle state
+// When running in PramnosFramework, Pramnos\Cache\Cache and Pramnos\Http\Client are auto-detected
 $scraper = XScraper::create(
     session: $session,
     storageDir: '/var/lib/xscraper', // optional custom directory
     proxy: 'http://proxy.example.com:8080', // optional proxy
+    // cache: \Pramnos\Cache\Cache::getInstance(), // optional explicit Pramnos cache
 );
 
 // Fetch conversation with smart incremental pagination
@@ -205,6 +207,8 @@ The test suite enforces a strict code coverage standard of **>= 95%** statement 
 | **Resolver** | `Mrpc\XScraper\QueryIdResolver` | GraphQL query ID management, feature flags, and auto-discovery |
 | **Lock** | `Mrpc\XScraper\Lock\FileLockFactory` | Cross-process mutual exclusion (`flock`) for single-flight fetching |
 | **Throttle** | `Mrpc\XScraper\RateLimit\Throttle` | Shared rate pacing with random jitter, server header tracking & 429 cooldown |
+| **Cache** | `Mrpc\XScraper\Cache\PramnosCache` | PSR-16 cache adapter wrapping native `Pramnos\Cache\Cache` |
+| **Cache** | `Mrpc\XScraper\Cache\FileCache` | PSR-16 atomic JSON file-based cache engine |
 | **Cache** | `Mrpc\XScraper\Cache\TtlPolicy` | Age-adaptive TTL policy calculated via Snowflake ID |
 | **Transport**| `Mrpc\XScraper\Http\Transport` | HTTP abstraction (`PramnosTransport`, `Psr18Transport`, `CurlTransport`) |
 

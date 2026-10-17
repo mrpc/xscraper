@@ -56,7 +56,11 @@ class XScraper
 
         // Defaults for cache, lock and throttle in temporary directory if not provided
         $baseDir = sys_get_temp_dir() . '/xscraper';
-        $this->cache ??= new FileCache($baseDir . '/cache');
+        if ($this->cache === null) {
+            $this->cache = class_exists(\Pramnos\Cache\Cache::class)
+                ? new \Mrpc\XScraper\Cache\PramnosCache()
+                : new FileCache($baseDir . '/cache');
+        }
         $this->lockFactory ??= new FileLockFactory($baseDir . '/locks');
         $this->throttle ??= new Throttle($baseDir . '/throttle');
 
@@ -76,9 +80,21 @@ class XScraper
         Session $session,
         ?string $storageDir = null,
         ?string $proxy = null,
+        ?object $cache = null,
     ): self {
         $dir = $storageDir ?? (sys_get_temp_dir() . '/xscraper');
-        $cache = new FileCache($dir . '/cache');
+
+        if ($cache === null) {
+            $cache = class_exists(\Pramnos\Cache\Cache::class)
+                ? new \Mrpc\XScraper\Cache\PramnosCache()
+                : new FileCache($dir . '/cache');
+        } elseif (!$cache instanceof CacheInterface) {
+            if (class_exists(\Pramnos\Cache\Cache::class) && $cache instanceof \Pramnos\Cache\Cache) {
+                $cache = new \Mrpc\XScraper\Cache\PramnosCache($cache);
+            } else {
+                throw new \InvalidArgumentException('Cache must implement Psr\SimpleCache\CacheInterface or be an instance of Pramnos\Cache\Cache');
+            }
+        }
         $lockFactory = new FileLockFactory($dir . '/locks');
         $throttle = new Throttle($dir . '/throttle');
 

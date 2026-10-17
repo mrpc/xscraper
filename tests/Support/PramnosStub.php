@@ -105,3 +105,48 @@ class Client
         return $this->response ?? new FakeResponse();
     }
 }
+
+namespace Pramnos\Cache;
+
+class Cache
+{
+    public static ?self $instance = null;
+    public array $storage = [];
+    public bool $saveResult = true;
+    public bool $deleteResult = true;
+
+    public static function getInstance(): self
+    {
+        return self::$instance ??= new self();
+    }
+
+    public function load(string $key): mixed
+    {
+        return $this->storage[$key] ?? false;
+    }
+
+    public function save(mixed $data, string $file, string $category = '', int $timeout = 0): bool
+    {
+        if (!$this->saveResult) {
+            return false;
+        }
+        $this->storage[$file] = $data;
+        return true;
+    }
+
+    public function delete(string $key): bool
+    {
+        if (!$this->deleteResult) {
+            return false;
+        }
+        unset($this->storage[$key]);
+        return true;
+    }
+
+    public function clear(): bool
+    {
+        $this->storage = [];
+        return true;
+    }
+}
+
