@@ -1,0 +1,25 @@
+{
+  "name": "@mrpc/chrome-scraper",
+  "version": "1.0.0",
+  "description": "Autonomous headless Chrome scraping microservice for x.com posts and replies with HTTP API and WebSocket streaming",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "scraper",
+    "x.com",
+    "twitter",
+    "headless-chrome",
+    "puppeteer"
+  ],
+  "author": "mrpc",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "puppeteer-core": "^24.0.0",
+    "ws": "^8.18.0"
+  }
+}

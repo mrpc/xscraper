@@ -79,9 +79,12 @@ final class CurlTransport implements Transport
 
         if ($request->method === 'POST') {
             $options[CURLOPT_POST] = true;
-            $options[CURLOPT_POSTFIELDS] = '';
+            $options[CURLOPT_POSTFIELDS] = $request->body ?? '';
         } elseif ($request->method !== 'GET') {
             $options[CURLOPT_CUSTOMREQUEST] = $request->method;
+            if ($request->body !== null) {
+                $options[CURLOPT_POSTFIELDS] = $request->body;
+            }
         }
 
         if ($this->proxy !== null && $this->proxy !== '') {

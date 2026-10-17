@@ -167,6 +167,80 @@ bin/xscraper get 1845187747970863384 --mode=refresh --max-replies=100
 
 # Route through outbound proxy
 bin/xscraper get 1845187747970863384 --proxy="socks5://127.0.0.1:9050"
+
+# Delegate scraping to autonomous Headless Chrome microservice
+bin/xscraper get 1845187747970863384 --chrome
+bin/xscraper get 1845187747970863384 --chrome=http://127.0.0.1:3000
+```
+
+---
+
+## Headless Chrome Scraping Microservice (`chrome-scraper`)
+
+The repository includes a secondary, autonomous system located in [`chrome-scraper/`](chrome-scraper/): a standalone Node.js microservice running headless Chromium via Puppeteer.
+
+### Architecture & Capabilities
+
+```
++-------------------------------------------------------+
+|                 mrpc/xscraper (PHP)                   |
+|                                                       |
+|  XScraper CLI / App  --->  ChromeBridge               |
++---------------------------------+---------------------+
+                                  |
+                                  | HTTP POST /scrape
+                                  | WebSocket /ws (live progress)
+                                  v
++-------------------------------------------------------+
+|             chrome-scraper (Node.js Service)          |
+|                                                       |
+|  Express REST API + WebSocket Server (:3000)          |
+|                       |                               |
+|                       v                               |
+|  Puppeteer Headless Chromium Engine                   |
+|    - Isolated BrowserContext per scrape request       |
+|    - Session cookie injection (auth_token, ct0)       |
+|    - GraphQL network interception (TweetDetail)       |
+|    - Dynamic DOM scrolling & rich rendering fallback  |
++-------------------------------------------------------+
+```
+
+1. **Autonomous Operation:** Runs independently in its own Docker container (`chrome-scraper`), isolating memory and browser subprocesses.
+2. **Dual Extraction Strategy:**
+   - **GraphQL Network Interception:** Listens to X's internal GraphQL `TweetDetail` network requests directly within Chromium and extracts the raw typed payloads.
+   - **DOM Extraction Fallback:** If GraphQL payloads are blocked or omitted, automatically falls back to scraping rendered DOM `article[data-testid="tweet"]` nodes.
+3. **Bidirectional Communication:**
+   - **REST API:** `POST /scrape` accepting `{ url, authToken, ct0, maxScrolls, timeoutMs }`.
+   - **WebSocket Streaming:** `GET /ws` providing real-time streaming progress events (`status`, `scrolled`, `intercepted`, `done`, `error`) to connected systems.
+   - **Health Check:** `GET /health` with Chromium process status and memory usage.
+
+### Running with Docker Compose
+
+Start both systems together:
+
+```bash
+docker compose up -d
+```
+
+The PHP environment can communicate directly with the Chrome scraper via the internal docker network at `http://chrome-scraper:3000`.
+
+### PHP Bridge Usage
+
+```php
+use Mrpc\XScraper\Bridge\ChromeBridge;
+
+$bridge = new ChromeBridge(
+    serviceUrl: 'http://127.0.0.1:3000',
+    authToken: getenv('X_AUTH_TOKEN'),
+    ct0: getenv('X_CT0'),
+);
+
+// Check if headless chrome service is healthy
+if ($bridge->isHealthy()) {
+    $conversation = $bridge->scrapeConversation('https://x.com/jack/status/20');
+    echo "Focal Tweet: " . $conversation->tweet->text . "\n";
+    echo "Replies: " . $conversation->replyCount() . "\n";
+}
 ```
 
 ---
@@ -190,6 +264,13 @@ Execute unit and integration tests inside Docker:
 ./dockertest --testdox
 ```
 
+### Running Node.js Microservice Tests
+
+```bash
+cd chrome-scraper
+npm test
+```
+
 ### Code Coverage Standard
 
 The test suite enforces a strict code coverage standard of **>= 95%** statement coverage across the library. If code coverage drops below 95%, `./dockertest` exits with a non-zero status.
@@ -201,6 +282,7 @@ The test suite enforces a strict code coverage standard of **>= 95%** statement 
 | Component | Class | Description |
 |---|---|---|
 | **Client** | `Mrpc\XScraper\XScraper` | Central coordinator orchestrating Cache, Mutex, Throttle, and Parser |
+| **Chrome Bridge** | `Mrpc\XScraper\Bridge\ChromeBridge` | HTTP client bridge integrating the autonomous headless Chrome scraper |
 | **Model** | `Mrpc\XScraper\Model\Conversation` | Focal post and reply collection with tree helpers |
 | **Model** | `Mrpc\XScraper\Model\Tweet` | Immutable post model with media, links, hashtags, and metrics |
 | **Parser** | `Mrpc\XScraper\TimelineParser` | GraphQL `TweetDetail` response parser with cursor tracking |

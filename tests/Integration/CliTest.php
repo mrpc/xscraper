@@ -72,5 +72,19 @@ final class CliTest extends TestCase
         $this->assertSame(1, $status);
         $this->assertStringContainsString("Unknown command 'invalidcommand'", $text);
     }
+
+    /**
+     * Verifies that --chrome option is documented in CLI help output.
+     */
+    public function testChromeOptionInHelp(): void
+    {
+        // Act
+        $output = shell_exec("php {$this->binPath} --help");
+
+        // Assert
+        $this->assertIsString($output);
+        $this->assertStringContainsString('--chrome[=URL]', $output);
+    }
 }
+
 

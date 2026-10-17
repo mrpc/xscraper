@@ -15,6 +15,7 @@ final class HttpRequest
         public readonly array $headers = [],
         public readonly int $timeout = 25,
         public readonly int $maxBodyBytes = 8_388_608,
+        public readonly ?string $body = null,
     ) {
     }
 

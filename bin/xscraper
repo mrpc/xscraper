@@ -54,10 +54,11 @@ Options:
   --cookie-header=HEADER           Raw Cookie header containing auth_token and ct0
   --proxy=URL                      Outbound HTTP/SOCKS proxy
   --storage-dir=DIR                Directory for cache, locks and throttle state
+  --chrome[=URL]                   Delegate scrape to headless Chrome service (default: http://127.0.0.1:3000)
   -h, --help                       Show this help message
 
 Environment variables:
-  X_AUTH_TOKEN, X_CT0, X_COOKIES, HTTPS_PROXY
+  X_AUTH_TOKEN, X_CT0, X_COOKIES, HTTPS_PROXY, CHROME_SCRAPER_URL
 
 USAGE;
 }
@@ -100,11 +101,16 @@ $options = [
     'cookie-header' => null,
     'proxy' => null,
     'storage-dir' => null,
+    'chrome' => null,
 ];
 
 foreach ($argvCopy as $arg) {
     if ($arg === '--json') {
         $options['json'] = true;
+    } elseif ($arg === '--chrome') {
+        $options['chrome'] = true;
+    } elseif (str_starts_with($arg, '--chrome=')) {
+        $options['chrome'] = substr($arg, 9);
     } elseif (str_starts_with($arg, '--mode=')) {
         $options['mode'] = substr($arg, 7);
     } elseif (str_starts_with($arg, '--max-replies=')) {
@@ -148,20 +154,35 @@ $fetchMode = match (strtolower((string) $options['mode'])) {
 
 // Build scraper instance
 $proxy = $options['proxy'] ?? getenv('HTTPS_PROXY') ?: getenv('https_proxy') ?: null;
-$scraper = XScraper::create(
-    $session,
-    storageDir: $options['storage-dir'],
-    proxy: is_string($proxy) && $proxy !== '' ? $proxy : null,
-);
 
 $startTime = microtime(true);
 
 try {
-    $conversation = $scraper->getConversation(
-        $target,
-        mode: $fetchMode,
-        maxReplies: max(0, (int) $options['max-replies']),
-    );
+    if ($options['chrome'] !== null) {
+        $chromeUrl = is_string($options['chrome']) && $options['chrome'] !== ''
+            ? $options['chrome']
+            : (getenv('CHROME_SCRAPER_URL') ?: 'http://127.0.0.1:3000');
+        $bridge = new \Mrpc\XScraper\Bridge\ChromeBridge($chromeUrl);
+        $maxReplies = max(0, (int) $options['max-replies']);
+        $maxScrolls = max(1, (int) ceil($maxReplies / 10));
+        $conversation = $bridge->scrape(
+            $target,
+            session: $session,
+            maxScrolls: $maxScrolls,
+            proxy: is_string($proxy) && $proxy !== '' ? $proxy : null,
+        );
+    } else {
+        $scraper = XScraper::create(
+            $session,
+            storageDir: $options['storage-dir'],
+            proxy: is_string($proxy) && $proxy !== '' ? $proxy : null,
+        );
+        $conversation = $scraper->getConversation(
+            $target,
+            mode: $fetchMode,
+            maxReplies: max(0, (int) $options['max-replies']),
+        );
+    }
 } catch (AuthenticationException $e) {
     fwrite(STDERR, "Authentication failed: " . $e->getMessage() . "\n");
     exit(2);

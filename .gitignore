@@ -7,3 +7,5 @@ composer.lock
 Thumbs.db
 /.idea
 /.vscode
+node_modules/
+chrome-scraper/node_modules/

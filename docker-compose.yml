@@ -10,3 +10,25 @@ services:
     working_dir: /var/www/html
     environment:
       - XDEBUG_MODE=coverage
+      - CHROME_SCRAPER_URL=http://chrome-scraper:3000
+    networks:
+      - xscraper-network
+
+  chrome-scraper:
+    build:
+      context: ./chrome-scraper
+      dockerfile: Dockerfile
+    image: xscraper-chrome-scraper:latest
+    container_name: xscraper_chrome
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+    init: true
+    networks:
+      - xscraper-network
+
+networks:
+  xscraper-network:
+    driver: bridge
