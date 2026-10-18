@@ -44,7 +44,6 @@ export async function getBrowser(customOptions = {}) {
     const isHeadless = customOptions.headless !== undefined ? customOptions.headless : true;
     const args = [
       '--no-sandbox',
-      '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-blink-features=AutomationControlled',
       '--no-first-run',
@@ -92,7 +91,6 @@ export async function launchDedicatedBrowser(customOptions = {}) {
 
   const args = [
     '--no-sandbox',
-    '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-blink-features=AutomationControlled',
     '--no-first-run',
