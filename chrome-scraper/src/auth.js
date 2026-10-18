@@ -74,8 +74,16 @@ export async function performLogin(options = {}) {
     ? await launchDedicatedBrowser({ headless: false, proxy: options.proxy })
     : await getBrowser({ headless: true, proxy: options.proxy });
 
-  const context = await browser.createBrowserContext();
-  const page = await context.newPage();
+  let page;
+  let context = null;
+
+  if (isHeaded) {
+    const existingPages = await browser.pages();
+    page = existingPages.length > 0 ? existingPages[0] : await browser.newPage();
+  } else {
+    context = await browser.createBrowserContext();
+    page = await context.newPage();
+  }
 
   try {
     await page.setUserAgent(
@@ -208,13 +216,17 @@ export async function performLogin(options = {}) {
     throw new Error(`Login timed out after ${Math.round(timeoutMs / 1000)} seconds without establishing an authenticated session.`);
   } finally {
     try {
-      await page.close();
-      await context.close();
       if (isHeaded) {
         await browser.close();
+      } else {
+        await page.close();
+        if (context) {
+          await context.close();
+        }
       }
     } catch {
       // Ignore cleanup error
     }
   }
+
 }
