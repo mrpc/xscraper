@@ -505,7 +505,8 @@ final class ChromeBridgeTest extends TestCase
             confirmation: 'confirm',
             headed: false,
             timeout: 60,
-            proxy: 'http://proxy.test:8080'
+            proxy: 'http://proxy.test:8080',
+            warmupSeconds: 80,
         );
 
         // Assert

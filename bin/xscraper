@@ -66,6 +66,8 @@ Options:
   --confirmation=TEXT              Email or phone for verification challenges
   --headed                         Launch visible browser window for login
   --headless                       Run login purely headless
+  --warmup-seconds=N               Organic browsing warmup time in seconds (default: 80 in headed)
+  --no-warmup                      Skip warmup and open login dialog immediately
   --proxy=URL                      Outbound HTTP/SOCKS proxy
   --storage-dir=DIR                Directory for cache, locks and throttle state
   --chrome[=URL]                   Delegate scrape to headless Chrome service (default: http://127.0.0.1:3000)
@@ -116,6 +118,7 @@ $options = [
     'password' => null,
     'confirmation' => null,
     'headed' => null,
+    'warmup-seconds' => null,
 ];
 
 foreach ($argvCopy as $arg) {
@@ -129,6 +132,10 @@ foreach ($argvCopy as $arg) {
         $options['headed'] = true;
     } elseif ($arg === '--headless') {
         $options['headed'] = false;
+    } elseif (str_starts_with($arg, '--warmup-seconds=')) {
+        $options['warmup-seconds'] = max(0, (int) substr($arg, 17));
+    } elseif ($arg === '--no-warmup') {
+        $options['warmup-seconds'] = 0;
     } elseif (str_starts_with($arg, '--username=')) {
         $options['username'] = substr($arg, 11);
     } elseif (str_starts_with($arg, '--password=')) {
@@ -185,7 +192,8 @@ if ($command === 'login') {
     $password = $options['password'] ?? getenv('X_PASSWORD') ?: null;
     $confirmation = $options['confirmation'] ?? getenv('X_EMAIL') ?: getenv('X_PHONE') ?: null;
     $headed = $options['headed'];
-    $timeout = $headed ? 300 : 120;
+    $warmupSeconds = $options['warmup-seconds'] ?? ($headed ? 80 : 0);
+    $timeout = $headed ? max(300, $warmupSeconds + 200) : 120;
 
     echo "[xscraper] Initiating login via Chrome service ({$chromeUrl})...\n";
     $bridge = new \Mrpc\XScraper\Bridge\ChromeBridge($chromeUrl);
@@ -197,6 +205,7 @@ if ($command === 'login') {
             headed: $headed,
             timeout: $timeout,
             proxy: is_string($proxy) && $proxy !== '' ? $proxy : null,
+            warmupSeconds: $warmupSeconds,
             onProgress: function (array $evt): void {
                 if (isset($evt['stage'])) {
                     $msg = isset($evt['message']) ? " - " . $evt['message'] : '';

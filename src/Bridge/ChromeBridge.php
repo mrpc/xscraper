@@ -114,6 +114,7 @@ class ChromeBridge
         int $timeout = 120,
         ?string $proxy = null,
         ?callable $onProgress = null,
+        ?int $warmupSeconds = null,
     ): array {
         if ($onProgress !== null) {
             return $this->loginWithStream(
@@ -124,6 +125,7 @@ class ChromeBridge
                 $timeout,
                 $proxy,
                 $onProgress,
+                $warmupSeconds,
             );
         }
 
@@ -134,6 +136,7 @@ class ChromeBridge
             'headed' => $headed,
             'timeoutMs' => max(10, $timeout) * 1000,
             'proxy' => $proxy,
+            'warmupSeconds' => $warmupSeconds,
         ];
 
         $request = new HttpRequest(
@@ -163,7 +166,14 @@ class ChromeBridge
     /**
      * Streams real-time login events and status from the Chrome microservice.
      *
+     * @param string|null $username
+     * @param string|null $password
+     * @param string|null $confirmation
+     * @param bool|null $headed
+     * @param int $timeout
+     * @param string|null $proxy
      * @param callable|null $onProgress
+     * @param int|null $warmupSeconds
      * @return array<string,mixed>
      */
     public function loginWithStream(
@@ -174,6 +184,7 @@ class ChromeBridge
         int $timeout = 300,
         ?string $proxy = null,
         ?callable $onProgress = null,
+        ?int $warmupSeconds = null,
     ): array {
         $payload = [
             'username' => $username,
@@ -183,6 +194,7 @@ class ChromeBridge
             'timeoutMs' => max(10, $timeout) * 1000,
             'proxy' => $proxy,
             'stream' => true,
+            'warmupSeconds' => $warmupSeconds,
         ];
 
         $encoded = json_encode($payload, JSON_THROW_ON_ERROR);
@@ -204,7 +216,7 @@ class ChromeBridge
         $context = stream_context_create(['http' => $httpOptions]);
         $fp = @fopen($url, 'rb', false, $context);
         if ($fp === false) {
-            return $this->login($username, $password, $confirmation, $headed, $timeout, $proxy);
+            return $this->login($username, $password, $confirmation, $headed, $timeout, $proxy, null, $warmupSeconds);
         }
 
         @stream_set_read_buffer($fp, 0);

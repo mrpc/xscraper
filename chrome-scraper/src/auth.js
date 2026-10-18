@@ -46,6 +46,330 @@ async function findButtonByText(page, text) {
 }
 
 /**
+ * Smoothly moves the mouse to a target coordinate using intermediate steps.
+ *
+ * @param {import('puppeteer-core').Page} page
+ * @param {number} x
+ * @param {number} y
+ * @param {number} [steps=20]
+ * @returns {Promise<void>}
+ */
+async function smoothMouseMove(page, x, y, steps = 20) {
+  try {
+    await page.mouse.move(x, y, { steps });
+  } catch {
+    // Ignore mouse errors if page is currently navigating
+  }
+}
+
+/**
+ * Dismisses unauthenticated popups/dialogs if present (e.g. "Don't miss what's happening").
+ *
+ * @param {import('puppeteer-core').Page} page
+ * @returns {Promise<void>}
+ */
+async function dismissPopupsIfPresent(page) {
+  try {
+    await page.keyboard.press('Escape');
+    const closeBtn =
+      (await page.$('button[aria-label="Close"]')) ||
+      (await page.$('div[aria-label="Close"]')) ||
+      (await page.$('[data-testid="app-bar-close"]'));
+    if (closeBtn) {
+      await closeBtn.click().catch(() => {});
+      await humanDelay(200, 400);
+    }
+  } catch {}
+}
+
+/**
+ * Finds valid tweet detail links on the current page.
+ *
+ * @param {import('puppeteer-core').Page} page
+ * @returns {Promise<import('puppeteer-core').ElementHandle[]>}
+ */
+async function findTweetLinks(page) {
+  try {
+    const links = await page.$$('article[data-testid="tweet"] a[href*="/status/"]');
+    const valid = [];
+    for (const link of links) {
+      const href = await page.evaluate((el) => el.getAttribute('href'), link);
+      if (href && /\/[A-Za-z0-9_]+\/status\/[0-9]+$/.test(href.split('?')[0])) {
+        valid.push(link);
+      }
+    }
+    return valid;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Finds valid user profile links from tweets on the current page.
+ *
+ * @param {import('puppeteer-core').Page} page
+ * @returns {Promise<import('puppeteer-core').ElementHandle[]>}
+ */
+async function findAccountLinks(page) {
+  try {
+    const links = await page.$$('article[data-testid="tweet"] a[role="link"][href^="/"]');
+    const valid = [];
+    const seen = new Set();
+    const reserved = new Set([
+      'home', 'explore', 'notifications', 'messages', 'i', 'search', 'settings',
+      'login', 'logout', 'signup', 'tos', 'privacy', 'x',
+    ]);
+
+    for (const link of links) {
+      const href = await page.evaluate((el) => el.getAttribute('href'), link);
+      if (!href) continue;
+      const clean = href.split('?')[0].replace(/^\//, '');
+      if (/^[A-Za-z0-9_]{1,15}$/.test(clean) && !reserved.has(clean.toLowerCase())) {
+        if (!seen.has(clean.toLowerCase())) {
+          seen.add(clean.toLowerCase());
+          valid.push(link);
+        }
+      }
+    }
+    return valid;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Simulates human-like browsing on public X pages (viewing tweets, opening threads, visiting accounts).
+ *
+ * @param {import('puppeteer-core').Page} page
+ * @param {number} durationSeconds Total duration to browse
+ * @param {function} onProgress Progress callback
+ * @returns {Promise<void>}
+ */
+export async function simulateHumanBrowsing(page, durationSeconds, onProgress) {
+  if (durationSeconds <= 0) {
+    return;
+  }
+
+  const startTime = Date.now();
+  const totalMs = durationSeconds * 1000;
+
+  onProgress({
+    event: 'status',
+    stage: 'warming_up',
+    message: `Starting natural browsing simulation (${durationSeconds}s) exploring tweets and accounts...`,
+  });
+
+  try {
+    await page.goto('https://x.com/x', {
+      waitUntil: 'domcontentloaded',
+      timeout: 35000,
+    });
+  } catch {}
+
+  await humanDelay(2000, 3500);
+  await dismissPopupsIfPresent(page);
+
+  let scrollCount = 0;
+  let lastActionTime = Date.now();
+
+  while (Date.now() - startTime < totalMs) {
+    if (page.isClosed()) {
+      break;
+    }
+
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    const remaining = Math.max(0, durationSeconds - elapsed);
+
+    if (remaining < 6) {
+      await humanDelay(1000, 2500);
+      break;
+    }
+
+    const currentUrl = page.url();
+    const isStatusDetail = currentUrl.includes('/status/');
+    const timeSinceLastAction = (Date.now() - lastActionTime) / 1000;
+
+    // Case 1: If we opened a tweet detail thread and have spent >= 8 seconds reading replies
+    if (isStatusDetail && timeSinceLastAction >= 8) {
+      onProgress({
+        event: 'status',
+        stage: 'warming_up',
+        message: `Finished reading thread, returning to feed (${elapsed}s / ${durationSeconds}s, ${remaining}s left)...`,
+      });
+
+      lastActionTime = Date.now();
+      try {
+        await page.goBack({ timeout: 15000 });
+        await humanDelay(2000, 3500);
+        await dismissPopupsIfPresent(page);
+      } catch {
+        try {
+          await page.goto('https://x.com/x', { waitUntil: 'domcontentloaded', timeout: 25000 });
+        } catch {}
+      }
+      continue;
+    }
+
+    // Case 2: On a feed or profile, decide whether to open a random tweet or account
+    if (!isStatusDetail && timeSinceLastAction >= 10 && remaining > 15) {
+      const chooseTweet = Math.random() < 0.6;
+
+      if (chooseTweet) {
+        const tweetLinks = await findTweetLinks(page);
+        if (tweetLinks.length > 0) {
+          const idx = Math.floor(Math.random() * Math.min(tweetLinks.length, 5));
+          const targetLink = tweetLinks[idx];
+          const href = await page.evaluate((el) => el.getAttribute('href'), targetLink);
+
+          try {
+            await page.evaluate((el) => {
+              el.removeAttribute('target');
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, targetLink);
+            await humanDelay(500, 1000);
+
+            const box = await targetLink.boundingBox();
+            if (box) {
+              await smoothMouseMove(page, box.x + box.width / 2, box.y + box.height / 2, 18);
+              await humanDelay(300, 600);
+            }
+
+            onProgress({
+              event: 'status',
+              stage: 'warming_up',
+              message: `Opening tweet ${href ? href.slice(0, 38) : ''} to view thread and replies (${elapsed}s / ${durationSeconds}s)...`,
+            });
+
+            lastActionTime = Date.now();
+            await targetLink.click();
+            await humanDelay(2500, 4500);
+            await dismissPopupsIfPresent(page);
+            continue;
+          } catch {}
+        }
+      } else {
+        const accountLinks = await findAccountLinks(page);
+        if (accountLinks.length > 0) {
+          const idx = Math.floor(Math.random() * Math.min(accountLinks.length, 5));
+          const targetLink = accountLinks[idx];
+          const href = await page.evaluate((el) => el.getAttribute('href'), targetLink);
+
+          try {
+            await page.evaluate((el) => {
+              el.removeAttribute('target');
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, targetLink);
+            await humanDelay(500, 1000);
+
+            const box = await targetLink.boundingBox();
+            if (box) {
+              await smoothMouseMove(page, box.x + box.width / 2, box.y + box.height / 2, 18);
+              await humanDelay(300, 600);
+            }
+
+            const cleanHandle = href ? href.replace(/^\//, '') : 'user';
+            onProgress({
+              event: 'status',
+              stage: 'warming_up',
+              message: `Visiting account profile @${cleanHandle} from timeline (${elapsed}s / ${durationSeconds}s)...`,
+            });
+
+            lastActionTime = Date.now();
+            await targetLink.click();
+            await humanDelay(2500, 4500);
+            await dismissPopupsIfPresent(page);
+            continue;
+          } catch {}
+        }
+      }
+    }
+
+    // Default action: inspect visible tweets, read, and scroll
+    let tweetSnippet = '';
+    let hoveredTweet = false;
+
+    try {
+      const tweets = await page.$$('article[data-testid="tweet"]');
+      if (tweets.length > 0) {
+        const idx = Math.floor(Math.random() * Math.min(tweets.length, 4));
+        const tweet = tweets[idx];
+        const box = await tweet.boundingBox();
+
+        if (box && box.y >= 0 && box.y < 800) {
+          const targetX = Math.max(100, Math.min(750, box.x + box.width * (0.3 + Math.random() * 0.4)));
+          const targetY = Math.max(100, Math.min(700, box.y + box.height * (0.3 + Math.random() * 0.4)));
+
+          await smoothMouseMove(page, targetX, targetY, 15 + Math.floor(Math.random() * 15));
+
+          tweetSnippet = await page.evaluate((el) => {
+            const textEl = el.querySelector('[data-testid="tweetText"]');
+            return textEl ? (textEl.innerText || textEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 50) : '';
+          }, tweet);
+
+          hoveredTweet = true;
+        }
+      }
+    } catch {}
+
+    const pageContext = isStatusDetail ? 'replies' : 'timeline';
+    if (hoveredTweet && tweetSnippet) {
+      onProgress({
+        event: 'status',
+        stage: 'warming_up',
+        message: `Viewing post: "${tweetSnippet}..." (${elapsed}s / ${durationSeconds}s)`,
+      });
+    } else {
+      onProgress({
+        event: 'status',
+        stage: 'warming_up',
+        message: `Browsing ${pageContext} (${elapsed}s / ${durationSeconds}s, ${remaining}s left)...`,
+      });
+    }
+
+    // Reading pause (2.5 to 5.5 seconds) with subtle cursor drift
+    const readPause = Math.floor(Math.random() * 2500) + 2500;
+    const pauseStart = Date.now();
+    while (Date.now() - pauseStart < readPause && Date.now() - startTime < totalMs) {
+      await humanDelay(800, 1400);
+      try {
+        const currentCoord = await page.evaluate(() => ({
+          x: Math.floor(Math.random() * 300) + 200,
+          y: Math.floor(Math.random() * 300) + 200,
+        }));
+        await smoothMouseMove(page, currentCoord.x, currentCoord.y, 8);
+      } catch {}
+    }
+
+    if (Date.now() - startTime >= totalMs) {
+      break;
+    }
+
+    scrollCount++;
+    const shouldScrollUp = scrollCount % 5 === 0;
+
+    try {
+      if (shouldScrollUp) {
+        const upDistance = -(Math.floor(Math.random() * 180) + 120);
+        await page.evaluate((dist) => window.scrollBy({ top: dist, behavior: 'smooth' }), upDistance);
+        await humanDelay(1200, 2000);
+      } else {
+        const downDistance = Math.floor(Math.random() * 260) + 260; // 260px - 520px
+        await page.evaluate((dist) => window.scrollBy({ top: dist, behavior: 'smooth' }), downDistance);
+        await humanDelay(1400, 2500);
+      }
+    } catch {}
+
+    await dismissPopupsIfPresent(page);
+  }
+
+  onProgress({
+    event: 'status',
+    stage: 'warming_up_completed',
+    message: 'Warmup completed! Opening login flow...',
+  });
+}
+
+/**
  * Executes an automated login flow on x.com.
  *
  * @param {object} options
@@ -65,7 +389,10 @@ export async function performLogin(options = {}) {
   const isHeaded = options.headed !== undefined
     ? options.headed
     : Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
-  const timeoutMs = options.timeoutMs || (isHeaded ? 300000 : 120000);
+  const warmupSeconds = options.warmupSeconds !== undefined
+    ? Math.max(0, Number(options.warmupSeconds))
+    : (options.warmup !== false && isHeaded ? 80 : 0);
+  const timeoutMs = options.timeoutMs || (isHeaded ? Math.max(300000, (warmupSeconds + 200) * 1000) : 120000);
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
 
   onProgress({ event: 'status', stage: 'launching_browser', headed: isHeaded });
@@ -185,30 +512,7 @@ export async function performLogin(options = {}) {
     });
 
 
-    const shouldWarmup = options.warmup !== false;
-
-    if (shouldWarmup) {
-      onProgress({ event: 'status', stage: 'warming_up', message: 'Browsing public timeline on x.com to warm up session cookies...' });
-      try {
-        await page.goto('https://x.com/x', {
-          waitUntil: 'domcontentloaded',
-          timeout: 30000,
-        });
-
-        // Human-like interaction: pause, mouse movement, scroll tweets
-        await new Promise((r) => setTimeout(r, 2000));
-        await page.mouse.move(250, 300);
-        await page.evaluate(() => window.scrollBy({ top: 450, behavior: 'smooth' }));
-        await new Promise((r) => setTimeout(r, 1800));
-        await page.mouse.move(450, 280);
-        await page.evaluate(() => window.scrollBy({ top: 300, behavior: 'smooth' }));
-        await new Promise((r) => setTimeout(r, 1200));
-      } catch {
-        // Non-fatal, proceed with login flow
-      }
-    }
-
-    // Check if user is already authenticated from persistent profile
+    // Check if user is already authenticated from persistent profile before warmup
     let cookies = await page.cookies();
     let authTokenCookie = cookies.find((c) => c.name === 'auth_token');
     let ct0Cookie = cookies.find((c) => c.name === 'ct0');
@@ -229,21 +533,53 @@ export async function performLogin(options = {}) {
       };
     }
 
+    // Organic browsing warmup simulation (1-2 minutes browsing tweets on public feeds)
+    if (warmupSeconds > 0) {
+      await simulateHumanBrowsing(page, warmupSeconds, onProgress);
+    }
+
+    // Re-check if authenticated after warmup
+    cookies = await page.cookies();
+    authTokenCookie = cookies.find((c) => c.name === 'auth_token');
+    ct0Cookie = cookies.find((c) => c.name === 'ct0');
+
+    if (authTokenCookie && ct0Cookie) {
+      onProgress({ event: 'status', stage: 'already_authenticated' });
+      saveSession({
+        authToken: authTokenCookie.value,
+        ct0: ct0Cookie.value,
+        username: username || 'authenticated_user',
+        cookies,
+      });
+      return {
+        success: true,
+        username,
+        authToken: authTokenCookie.value,
+        ct0: ct0Cookie.value,
+      };
+    }
+
     onProgress({ event: 'status', stage: 'opening_login', message: 'Opening login dialog...' });
     let loginOpened = false;
 
-    if (shouldWarmup && page.url().includes('x.com')) {
+    if (warmupSeconds > 0 && page.url().includes('x.com')) {
       try {
         const signInBtn =
           (await page.$('a[href="/login"]')) ||
           (await page.$('a[href="/i/flow/login"]')) ||
+          (await page.$('[data-testid="loginButton"]')) ||
           (await findButtonByText(page, 'Sign in')) ||
           (await findButtonByText(page, 'Log in'));
 
         if (signInBtn) {
+          const btnBox = await signInBtn.boundingBox();
+          if (btnBox) {
+            await smoothMouseMove(page, btnBox.x + btnBox.width / 2, btnBox.y + btnBox.height / 2, 15);
+            await humanDelay(300, 700);
+          }
           await signInBtn.click();
           loginOpened = true;
-          await new Promise((r) => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 2500));
         }
       } catch {
         // Fallback to direct navigation

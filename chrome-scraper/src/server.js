@@ -62,7 +62,7 @@ export function createApp() {
 
   // Login endpoint with optional streaming support
   app.post('/login', async (req, res) => {
-    const { username, password, confirmation, headed, timeoutMs, proxy } = req.body || {};
+    const { username, password, confirmation, headed, timeoutMs, proxy, warmupSeconds, warmup } = req.body || {};
     const isStream = req.query.stream === '1' || req.body?.stream === true;
 
     if (isStream) {
@@ -84,6 +84,8 @@ export function createApp() {
           headed,
           timeoutMs,
           proxy,
+          warmupSeconds,
+          warmup,
           onProgress: (evt) => {
             sendChunk({ type: 'progress', ...evt });
           },
@@ -116,6 +118,8 @@ export function createApp() {
         headed,
         timeoutMs,
         proxy,
+        warmupSeconds,
+        warmup,
       });
 
       return res.json({
