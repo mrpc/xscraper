@@ -188,19 +188,21 @@ export async function performLogin(options = {}) {
     const shouldWarmup = options.warmup !== false;
 
     if (shouldWarmup) {
-      onProgress({ event: 'status', stage: 'warming_up', message: 'Browsing x.com explore to warm up visitor cookies and telemetry...' });
+      onProgress({ event: 'status', stage: 'warming_up', message: 'Browsing public timeline on x.com to warm up session cookies...' });
       try {
-        await page.goto('https://x.com/explore', {
+        await page.goto('https://x.com/x', {
           waitUntil: 'domcontentloaded',
           timeout: 30000,
         });
 
-        // Human-like interaction: delay, mouse movement, scroll feed
-        await new Promise((r) => setTimeout(r, 1500));
+        // Human-like interaction: pause, mouse movement, scroll tweets
+        await new Promise((r) => setTimeout(r, 2000));
         await page.mouse.move(250, 300);
-        await page.evaluate(() => window.scrollBy({ top: 400, behavior: 'smooth' }));
-        await new Promise((r) => setTimeout(r, 1200));
+        await page.evaluate(() => window.scrollBy({ top: 450, behavior: 'smooth' }));
+        await new Promise((r) => setTimeout(r, 1800));
         await page.mouse.move(450, 280);
+        await page.evaluate(() => window.scrollBy({ top: 300, behavior: 'smooth' }));
+        await new Promise((r) => setTimeout(r, 1200));
       } catch {
         // Non-fatal, proceed with login flow
       }
