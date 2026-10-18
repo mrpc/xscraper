@@ -82,6 +82,30 @@ export async function getBrowser(customOptions = {}) {
 }
 
 /**
+ * Removes stale Chromium lock files left behind if a container restarts abruptly.
+ *
+ * @param {string} userDataDir
+ */
+export function clearStaleProfileLocks(userDataDir) {
+  try {
+    if (!userDataDir) {
+      return;
+    }
+    const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+    for (const file of lockFiles) {
+      const lockPath = path.join(userDataDir, file);
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // Ignore file not found
+      }
+    }
+  } catch {
+    // Ignore error
+  }
+}
+
+/**
  * Launches a separate, dedicated browser instance (e.g. for headed interactive login).
  *
  * @param {object} customOptions
@@ -92,6 +116,8 @@ export async function launchDedicatedBrowser(customOptions = {}) {
   const isHeadless = customOptions.headless !== undefined ? customOptions.headless : false;
   const dataDir = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
   const userDataDir = customOptions.userDataDir || path.join(dataDir, 'chrome-profile');
+
+  clearStaleProfileLocks(userDataDir);
 
   const args = [
     '--no-sandbox',
