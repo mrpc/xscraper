@@ -113,11 +113,49 @@ export async function performLogin(options = {}) {
       });
     });
 
+    // Monitor onboarding API network responses to see exact X server instructions/errors
+    page.on('response', async (res) => {
+      const url = res.url();
+      if (url.includes('/onboarding/task.json') || url.includes('/onboarding/flow.json')) {
+        try {
+          const json = await res.json();
+          const flowToken = json.flow_token ? 'present' : 'none';
+          const subtasks = json.subtasks ? json.subtasks.map((s) => s.subtask_id).join(', ') : 'none';
+          console.log(`[x-login-api] Status ${res.status()} - Subtasks: [${subtasks}]`);
+          if (json.errors && json.errors.length > 0) {
+            console.log(`[x-login-api] Errors:`, JSON.stringify(json.errors));
+          }
+          onProgress({
+            event: 'api',
+            stage: 'x_api_step',
+            status: res.status(),
+            subtasks,
+            errors: json.errors || null,
+          });
+        } catch {
+          // Ignore non-json
+        }
+      }
+    });
+
+    page.on('console', (msg) => {
+      const text = msg.text();
+      if (text.includes('Arkose') || text.includes('captcha') || text.includes('error')) {
+        onProgress({
+          event: 'browser_log',
+          stage: 'browser_console',
+          message: text.slice(0, 150),
+        });
+      }
+    });
+
+
     onProgress({ event: 'status', stage: 'navigating', url: 'https://x.com/i/flow/login' });
     await page.goto('https://x.com/i/flow/login', {
       waitUntil: 'domcontentloaded',
       timeout: 45000,
     });
+
 
 
     // Check if user is already authenticated
@@ -141,67 +179,6 @@ export async function performLogin(options = {}) {
       };
     }
 
-    // Automated interaction if username provided
-    if (username) {
-      onProgress({ event: 'status', stage: 'entering_username', username });
-      const userInput = await page.waitForSelector(
-        'input[autocomplete="username"], input[name="text"]',
-        { timeout: 15000 }
-      );
-
-      if (userInput) {
-        await userInput.click({ clickCount: 3 });
-        await humanType(userInput, username);
-        await new Promise((r) => setTimeout(r, 600));
-
-        const nextBtn = await findButtonByText(page, 'Next');
-        if (nextBtn) {
-          await nextBtn.click();
-        } else {
-          await page.keyboard.press('Enter');
-        }
-      }
-
-      await new Promise((r) => setTimeout(r, 2000));
-
-      // Check for secondary confirmation challenge (phone, email, or handle)
-      const challengeInput = await page.$(
-        'input[data-testid="ocfEnterTextTextInput"], input[name="text"]'
-      );
-      if (challengeInput) {
-        const isPasswordInput = await page.$('input[name="password"]');
-        if (!isPasswordInput && confirmation) {
-          onProgress({ event: 'status', stage: 'entering_confirmation', confirmation });
-          await humanType(challengeInput, confirmation);
-          await new Promise((r) => setTimeout(r, 500));
-          const challengeNext = await findButtonByText(page, 'Next');
-          if (challengeNext) {
-            await challengeNext.click();
-          } else {
-            await page.keyboard.press('Enter');
-          }
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-      }
-
-      // Enter password if provided
-      if (password) {
-        onProgress({ event: 'status', stage: 'entering_password' });
-        const passInput = await page.waitForSelector('input[name="password"]', { timeout: 15000 });
-        if (passInput) {
-          await humanType(passInput, password);
-          await new Promise((r) => setTimeout(r, 600));
-
-          const loginBtn = (await findButtonByText(page, 'Log in')) || (await findButtonByText(page, 'Next'));
-          if (loginBtn) {
-            await loginBtn.click();
-          } else {
-            await page.keyboard.press('Enter');
-          }
-        }
-      }
-    }
-
     onProgress({
       event: 'status',
       stage: 'waiting_for_authentication',
@@ -210,9 +187,21 @@ export async function performLogin(options = {}) {
         : 'Waiting for login completion cookies...',
     });
 
-    // Poll for session cookies until timeout
+    // Concurrently handle automated inputs and poll for session cookies in parallel
+    let usernameEntered = false;
+    let confirmationEntered = false;
+    let passwordEntered = false;
+
     const startTime = Date.now();
     while (Date.now() - startTime < timeoutMs) {
+      if (browser && typeof browser.isConnected === 'function' && !browser.isConnected()) {
+        throw new Error('Browser window was closed before login completed.');
+      }
+      if (page && typeof page.isClosed === 'function' && page.isClosed()) {
+        throw new Error('Login tab was closed before login completed.');
+      }
+
+      // Check for authenticated session cookies
       cookies = await page.cookies();
       authTokenCookie = cookies.find((c) => c.name === 'auth_token');
       ct0Cookie = cookies.find((c) => c.name === 'ct0');
@@ -232,6 +221,97 @@ export async function performLogin(options = {}) {
           authToken: authTokenCookie.value,
           ct0: ct0Cookie.value,
         };
+      }
+
+      // Automated assistance for input fields (runs safely in parallel with user)
+      try {
+        // 1. Initial login input: Username / Email
+        if (username && !usernameEntered) {
+          const userInput = await page.$(
+            'input[autocomplete="username"], input[name="text"]'
+          );
+          if (userInput) {
+            const isPasswordPresent = await page.$('input[name="password"]');
+            if (!isPasswordPresent) {
+              onProgress({ event: 'status', stage: 'entering_username', username });
+              await userInput.click({ clickCount: 3 });
+              await humanType(userInput, username);
+              await humanDelay(300, 600);
+
+              const nextBtn = await findButtonByText(page, 'Next');
+              if (nextBtn) {
+                await nextBtn.click();
+              } else {
+                await page.keyboard.press('Enter');
+              }
+              usernameEntered = true;
+              await humanDelay(1000, 2000);
+            }
+          }
+        }
+
+        // 2. Secondary challenge: "Enter your phone number or username"
+        const challengeInput = await page.$(
+          'input[data-testid="ocfEnterTextTextInput"]'
+        );
+        if (challengeInput) {
+          const isPasswordPresent = await page.$('input[name="password"]');
+          if (!isPasswordPresent) {
+            if (confirmation && !confirmationEntered) {
+              onProgress({ event: 'status', stage: 'entering_confirmation', confirmation });
+              await challengeInput.click({ clickCount: 3 });
+              await humanType(challengeInput, confirmation);
+              await humanDelay(300, 600);
+
+              const nextBtn = await findButtonByText(page, 'Next');
+              if (nextBtn) {
+                await nextBtn.click();
+              } else {
+                await page.keyboard.press('Enter');
+              }
+              confirmationEntered = true;
+              await humanDelay(1000, 2000);
+            } else if (!confirmationEntered) {
+              onProgress({
+                event: 'status',
+                stage: 'waiting_for_user_verification',
+                message: 'Secondary verification required (phone/username). Please enter it in the browser window or pass --confirmation.',
+              });
+              confirmationEntered = true;
+            }
+          }
+        }
+
+        // 3. Password input
+        const passInput = await page.$('input[name="password"]');
+        if (passInput) {
+          if (password && !passwordEntered) {
+            onProgress({ event: 'status', stage: 'entering_password' });
+            await passInput.click({ clickCount: 3 });
+            await humanType(passInput, password);
+            await humanDelay(300, 600);
+
+            const loginBtn =
+              (await findButtonByText(page, 'Log in')) ||
+              (await findButtonByText(page, 'Next'));
+            if (loginBtn) {
+              await loginBtn.click();
+            } else {
+              await page.keyboard.press('Enter');
+            }
+            passwordEntered = true;
+            await humanDelay(1000, 2000);
+          } else if (!passwordEntered) {
+            onProgress({
+              event: 'status',
+              stage: 'waiting_for_password',
+              message: 'Password prompt detected. Please enter password in the browser window.',
+            });
+            passwordEntered = true;
+          }
+        }
+      } catch {
+        // Automation step error (e.g. element detached while typing) should not break loop
       }
 
       await new Promise((r) => setTimeout(r, 1000));

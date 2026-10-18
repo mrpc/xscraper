@@ -92,6 +92,20 @@ class ChromeBridge
      *
      * @throws ResponseException on login failure
      */
+    /**
+     * Triggers an automated or headed login flow on x.com via the Chrome scraper.
+     *
+     * @param string|null $username Username, email or handle
+     * @param string|null $password Account password
+     * @param string|null $confirmation Secondary verification (phone or email)
+     * @param bool|null $headed Force headed (visible browser) or headless mode
+     * @param int $timeout Timeout in seconds
+     * @param string|null $proxy Outbound proxy
+     * @param callable|null $onProgress Optional callback for real-time progress events
+     * @return array<string,mixed>
+     *
+     * @throws ResponseException on login failure
+     */
     public function login(
         ?string $username = null,
         ?string $password = null,
@@ -99,7 +113,20 @@ class ChromeBridge
         ?bool $headed = null,
         int $timeout = 120,
         ?string $proxy = null,
+        ?callable $onProgress = null,
     ): array {
+        if ($onProgress !== null) {
+            return $this->loginWithStream(
+                $username,
+                $password,
+                $confirmation,
+                $headed,
+                $timeout,
+                $proxy,
+                $onProgress,
+            );
+        }
+
         $payload = [
             'username' => $username,
             'password' => $password,
@@ -132,6 +159,109 @@ class ChromeBridge
 
         return $json;
     }
+
+    /**
+     * Streams real-time login events and status from the Chrome microservice.
+     *
+     * @param callable|null $onProgress
+     * @return array<string,mixed>
+     */
+    public function loginWithStream(
+        ?string $username = null,
+        ?string $password = null,
+        ?string $confirmation = null,
+        ?bool $headed = null,
+        int $timeout = 300,
+        ?string $proxy = null,
+        ?callable $onProgress = null,
+    ): array {
+        $payload = [
+            'username' => $username,
+            'password' => $password,
+            'confirmation' => $confirmation,
+            'headed' => $headed,
+            'timeoutMs' => max(10, $timeout) * 1000,
+            'proxy' => $proxy,
+            'stream' => true,
+        ];
+
+        $encoded = json_encode($payload, JSON_THROW_ON_ERROR);
+        $url = $this->serviceUrl . '/login?stream=1';
+
+        $httpOptions = [
+            'method' => 'POST',
+            'header' => "Content-Type: application/json\r\nAccept: application/x-ndjson\r\n",
+            'content' => $encoded,
+            'timeout' => $timeout + 15,
+            'ignore_errors' => true,
+        ];
+
+        if ($proxy !== null && $proxy !== '') {
+            $httpOptions['proxy'] = $proxy;
+            $httpOptions['request_fulluri'] = true;
+        }
+
+        $context = stream_context_create(['http' => $httpOptions]);
+        $fp = @fopen($url, 'rb', false, $context);
+        if ($fp === false) {
+            return $this->login($username, $password, $confirmation, $headed, $timeout, $proxy);
+        }
+
+        $linesGenerator = (function () use ($fp) {
+            try {
+                while (!feof($fp)) {
+                    $line = fgets($fp);
+                    if ($line !== false) {
+                        yield $line;
+                    }
+                }
+            } finally {
+                fclose($fp);
+            }
+        })();
+
+        return $this->parseStreamLines($linesGenerator, $onProgress);
+    }
+
+    /**
+     * @param iterable<mixed> $lines
+     * @param callable|null $onProgress
+     * @return array<string,mixed>
+     */
+    public function parseStreamLines(iterable $lines, ?callable $onProgress = null): array
+    {
+        $lastResult = null;
+        foreach ($lines as $line) {
+            if (!is_string($line) || trim($line) === '') {
+                continue;
+            }
+            $data = json_decode(trim($line), true);
+            if (!is_array($data)) {
+                continue;
+            }
+
+            if ($onProgress !== null) {
+                $onProgress($data);
+            }
+
+            if (isset($data['type']) && ($data['type'] === 'complete' || $data['type'] === 'error')) {
+                $lastResult = $data;
+            }
+        }
+
+        if ($lastResult === null) {
+            throw new ResponseException('Connection closed without completing login');
+        }
+
+        if (!($lastResult['success'] ?? false)) {
+            $err = $lastResult['error'] ?? 'Login failed';
+            throw new ResponseException((string) $err);
+        }
+
+        return $lastResult;
+    }
+
+
 
     /**
      * Checks the currently stored session status on the Chrome scraper.

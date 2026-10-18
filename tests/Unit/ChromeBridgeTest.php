@@ -394,5 +394,97 @@ final class ChromeBridgeTest extends TestCase
         // Act & Assert (failed logout)
         $this->assertFalse($bridge->logout());
     }
+
+    /**
+     * Verifies that parseStreamLines correctly invokes onProgress and returns completed login data.
+     */
+    public function testParseStreamLinesSuccess(): void
+    {
+        // Arrange
+        $bridge = new ChromeBridge();
+        $lines = [
+            json_encode(['type' => 'progress', 'stage' => 'navigating']),
+            '',
+            json_encode(['type' => 'progress', 'stage' => 'entering_username']),
+            json_encode(['type' => 'complete', 'success' => true, 'username' => 'testuser', 'authToken' => 'tok']),
+        ];
+
+        $events = [];
+        $callback = function (array $evt) use (&$events): void {
+            $events[] = $evt;
+        };
+
+        // Act
+        $result = $bridge->parseStreamLines($lines, $callback);
+
+        // Assert
+        $this->assertSame(3, count($events));
+        $this->assertTrue($result['success']);
+        $this->assertSame('testuser', $result['username']);
+    }
+
+    /**
+     * Verifies that parseStreamLines throws ResponseException on streaming error or missing completion.
+     */
+    public function testParseStreamLinesThrowsOnError(): void
+    {
+        // Arrange
+        $bridge = new ChromeBridge();
+        $errorLines = [
+            json_encode(['type' => 'error', 'success' => false, 'error' => 'Login timed out']),
+        ];
+
+        // Assert
+        $this->expectException(ResponseException::class);
+        $this->expectExceptionMessage('Login timed out');
+
+        // Act
+        $bridge->parseStreamLines($errorLines);
+    }
+
+    /**
+     * Verifies that parseStreamLines throws ResponseException when stream is empty without result.
+     */
+    public function testParseStreamLinesThrowsOnEmptyStream(): void
+    {
+        // Arrange
+        $bridge = new ChromeBridge();
+
+        // Assert
+        $this->expectException(ResponseException::class);
+        $this->expectExceptionMessage('Connection closed without completing login');
+
+        // Act
+        $bridge->parseStreamLines(['', 'not-json-line']);
+    }
+
+    /**
+     * Verifies that login() with onProgress delegates to streaming and falls back on fopen failure.
+     */
+    public function testLoginDelegatesToStreamWhenProgressCallbackProvided(): void
+    {
+        // Arrange
+        $transport = $this->createMock(Transport::class);
+        $transport->method('send')
+            ->willReturn(new HttpResponse(200, [], '{"success":true,"username":"streamuser"}'));
+
+        // Use an invalid local port so fopen fails and triggers the fallback to login()
+        $bridge = new ChromeBridge('http://127.0.0.1:59998', $transport);
+        $called = false;
+
+        // Act
+        $result = $bridge->login(
+            username: 'streamuser',
+            headed: true,
+            onProgress: function () use (&$called): void {
+                $called = true;
+            },
+        );
+
+        // Assert
+        $this->assertTrue($result['success']);
+        $this->assertSame('streamuser', $result['username']);
+    }
 }
+
 

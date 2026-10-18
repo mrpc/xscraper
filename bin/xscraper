@@ -197,9 +197,29 @@ if ($command === 'login') {
             headed: $headed,
             timeout: $timeout,
             proxy: is_string($proxy) && $proxy !== '' ? $proxy : null,
+            onProgress: function (array $evt): void {
+                if (isset($evt['stage'])) {
+                    $msg = isset($evt['message']) ? " - " . $evt['message'] : '';
+                    echo "[status] " . $evt['stage'] . $msg . "\n";
+                }
+                if (isset($evt['subtasks']) && $evt['subtasks'] !== 'none') {
+                    echo "[x-api] Current step: " . $evt['subtasks'] . "\n";
+                }
+                if (isset($evt['errors']) && is_array($evt['errors'])) {
+                    foreach ($evt['errors'] as $err) {
+                        $errMsg = is_array($err) ? ($err['message'] ?? json_encode($err)) : (string) $err;
+                        echo "[x-api-error] " . $errMsg . "\n";
+                    }
+                }
+                if (ob_get_level() > 0) {
+                    ob_flush();
+                }
+                flush();
+            },
         );
         echo "[xscraper] Login successful! Session stored for: " . ($res['username'] ?? 'user') . "\n";
         exit(0);
+
 
     } catch (\Throwable $e) {
         fwrite(STDERR, "[xscraper] Login failed: " . $e->getMessage() . "\n");

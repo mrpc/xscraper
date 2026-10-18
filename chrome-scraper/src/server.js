@@ -50,9 +50,53 @@ export function createApp() {
     res.json({ success, message: success ? 'Session cleared' : 'No session to clear' });
   });
 
-  // Login endpoint
+  // Login endpoint with optional streaming support
   app.post('/login', async (req, res) => {
     const { username, password, confirmation, headed, timeoutMs, proxy } = req.body || {};
+    const isStream = req.query.stream === '1' || req.body?.stream === true;
+
+    if (isStream) {
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.flushHeaders?.();
+
+      const sendChunk = (data) => {
+        try {
+          res.write(JSON.stringify(data) + '\n');
+        } catch {}
+      };
+
+      try {
+        const result = await performLogin({
+          username,
+          password,
+          confirmation,
+          headed,
+          timeoutMs,
+          proxy,
+          onProgress: (evt) => {
+            sendChunk({ type: 'progress', ...evt });
+          },
+        });
+
+        sendChunk({
+          type: 'complete',
+          success: true,
+          message: 'Logged in successfully',
+          username: result.username,
+          hasAuthToken: Boolean(result.authToken),
+          hasCt0: Boolean(result.ct0),
+        });
+        return res.end();
+      } catch (err) {
+        sendChunk({
+          type: 'error',
+          success: false,
+          error: err.message || 'Login failed',
+        });
+        return res.end();
+      }
+    }
 
     try {
       const result = await performLogin({
@@ -78,6 +122,7 @@ export function createApp() {
       });
     }
   });
+
 
   // HTTP Scrape endpoint
   app.post('/scrape', async (req, res) => {
