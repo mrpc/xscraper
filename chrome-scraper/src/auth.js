@@ -238,7 +238,10 @@ export async function performLogin(options = {}) {
               await humanType(userInput, username);
               await humanDelay(300, 600);
 
-              const nextBtn = await findButtonByText(page, 'Next');
+              const nextBtn =
+                (await findButtonByText(page, 'Next')) ||
+                (await findButtonByText(page, 'Continue')) ||
+                (await findButtonByText(page, 'Log in'));
               if (nextBtn) {
                 await nextBtn.click();
               } else {
@@ -252,7 +255,7 @@ export async function performLogin(options = {}) {
 
         // 2. Secondary challenge: "Enter your phone number or username"
         const challengeInput = await page.$(
-          'input[data-testid="ocfEnterTextTextInput"]'
+          'input[data-testid="ocfEnterTextTextInput"], input[name="text"]'
         );
         if (challengeInput) {
           const isPasswordPresent = await page.$('input[name="password"]');
@@ -263,7 +266,10 @@ export async function performLogin(options = {}) {
               await humanType(challengeInput, confirmation);
               await humanDelay(300, 600);
 
-              const nextBtn = await findButtonByText(page, 'Next');
+              const nextBtn =
+                (await findButtonByText(page, 'Next')) ||
+                (await findButtonByText(page, 'Continue')) ||
+                (await findButtonByText(page, 'Log in'));
               if (nextBtn) {
                 await nextBtn.click();
               } else {
