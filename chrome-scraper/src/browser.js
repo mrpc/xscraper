@@ -46,9 +46,10 @@ export async function getBrowser(customOptions = {}) {
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
+      '--disable-blink-features=AutomationControlled',
       '--no-first-run',
       '--no-zygote',
+      '--lang=en-US,en',
       '--window-size=1280,800',
       ...(customOptions.args || []),
     ];
@@ -64,6 +65,7 @@ export async function getBrowser(customOptions = {}) {
     sharedBrowser = await puppeteer.launch({
       executablePath,
       headless: isHeadless,
+      ignoreDefaultArgs: ['--enable-automation'],
       args,
       defaultViewport: isHeadless ? { width: 1280, height: 800 } : null,
     });
@@ -92,7 +94,9 @@ export async function launchDedicatedBrowser(customOptions = {}) {
     '--no-sandbox',
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
+    '--disable-blink-features=AutomationControlled',
     '--no-first-run',
+    '--lang=en-US,en',
     '--window-size=1280,850',
     ...(customOptions.args || []),
   ];
@@ -108,10 +112,12 @@ export async function launchDedicatedBrowser(customOptions = {}) {
   return await puppeteer.launch({
     executablePath,
     headless: isHeadless,
+    ignoreDefaultArgs: ['--enable-automation'],
     args,
     defaultViewport: isHeadless ? { width: 1280, height: 850 } : null,
   });
 }
+
 
 
 export async function closeBrowser() {

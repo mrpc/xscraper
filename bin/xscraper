@@ -185,6 +185,7 @@ if ($command === 'login') {
     $password = $options['password'] ?? getenv('X_PASSWORD') ?: null;
     $confirmation = $options['confirmation'] ?? getenv('X_EMAIL') ?: getenv('X_PHONE') ?: null;
     $headed = $options['headed'];
+    $timeout = $headed ? 300 : 120;
 
     echo "[xscraper] Initiating login via Chrome service ({$chromeUrl})...\n";
     $bridge = new \Mrpc\XScraper\Bridge\ChromeBridge($chromeUrl);
@@ -194,10 +195,12 @@ if ($command === 'login') {
             password: $password,
             confirmation: $confirmation,
             headed: $headed,
+            timeout: $timeout,
             proxy: is_string($proxy) && $proxy !== '' ? $proxy : null,
         );
         echo "[xscraper] Login successful! Session stored for: " . ($res['username'] ?? 'user') . "\n";
         exit(0);
+
     } catch (\Throwable $e) {
         fwrite(STDERR, "[xscraper] Login failed: " . $e->getMessage() . "\n");
         exit(1);

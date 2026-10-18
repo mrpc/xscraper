@@ -65,7 +65,7 @@ export async function performLogin(options = {}) {
   const isHeaded = options.headed !== undefined
     ? options.headed
     : Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
-  const timeoutMs = options.timeoutMs || 120000;
+  const timeoutMs = options.timeoutMs || (isHeaded ? 300000 : 120000);
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
 
   onProgress({ event: 'status', stage: 'launching_browser', headed: isHeaded });
@@ -90,11 +90,35 @@ export async function performLogin(options = {}) {
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
     );
 
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+    });
+
+    // Mask automation detection signals so x.com does not freeze or block JS execution
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined,
+      });
+      window.chrome = {
+        runtime: {},
+        loadTimes: function () {},
+        csi: function () {},
+        app: {},
+      };
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en'],
+      });
+    });
+
     onProgress({ event: 'status', stage: 'navigating', url: 'https://x.com/i/flow/login' });
     await page.goto('https://x.com/i/flow/login', {
       waitUntil: 'domcontentloaded',
-      timeout: 30000,
+      timeout: 45000,
     });
+
 
     // Check if user is already authenticated
     let cookies = await page.cookies();
