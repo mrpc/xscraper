@@ -9,6 +9,7 @@ use Mrpc\XScraper\Exception\TweetNotFoundException;
 use Mrpc\XScraper\Http\CurlTransport;
 use Mrpc\XScraper\Http\HttpRequest;
 use Mrpc\XScraper\Http\PramnosTransport;
+use Mrpc\XScraper\Http\StreamTransport;
 use Mrpc\XScraper\Http\Transport;
 use Mrpc\XScraper\Model\Conversation;
 use Mrpc\XScraper\Model\FetchStats;
@@ -43,10 +44,13 @@ class ChromeBridge
             $this->transport = $transport;
         } elseif (class_exists(PramnosHttpClient::class)) {
             $this->transport = new PramnosTransport();
-        } else {
+        } elseif (extension_loaded('curl')) {
             $this->transport = new CurlTransport();
+        } else {
+            $this->transport = new StreamTransport();
         }
     }
+
 
     public function serviceUrl(): string
     {

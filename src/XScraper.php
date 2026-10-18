@@ -13,6 +13,7 @@ use Mrpc\XScraper\Http\BrowserProfile;
 use Mrpc\XScraper\Http\CurlTransport;
 use Mrpc\XScraper\Http\HttpRequest;
 use Mrpc\XScraper\Http\PramnosTransport;
+use Mrpc\XScraper\Http\StreamTransport;
 use Mrpc\XScraper\Http\Transport;
 use Mrpc\XScraper\Lock\FileLockFactory;
 use Mrpc\XScraper\Lock\LockFactory;
@@ -67,8 +68,10 @@ class XScraper
         if ($this->transport === null) {
             if (class_exists(PramnosHttpClient::class)) {
                 $this->transport = new PramnosTransport();
-            } else {
+            } elseif (extension_loaded('curl')) {
                 $this->transport = new CurlTransport();
+            } else {
+                $this->transport = new StreamTransport();
             }
         }
     }
@@ -100,9 +103,10 @@ class XScraper
 
         $transport = class_exists(PramnosHttpClient::class)
             ? new PramnosTransport(proxy: $proxy)
-            : new CurlTransport(proxy: $proxy);
+            : (extension_loaded('curl') ? new CurlTransport(proxy: $proxy) : new StreamTransport(proxy: $proxy));
 
         return new self(
+
             $session,
             transport: $transport,
             cache: $cache,
