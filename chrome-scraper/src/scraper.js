@@ -1,4 +1,5 @@
 import { getBrowser } from './browser.js';
+import { loadSession } from './session.js';
 
 export function extractPostId(urlOrId) {
   if (!urlOrId || typeof urlOrId !== 'string') {
@@ -23,6 +24,18 @@ export async function scrapePost(options = {}) {
   const maxScrolls = options.maxScrolls ?? 8;
   const scrollDelay = options.scrollDelay ?? 1200;
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+
+  // Auto-resolve session credentials if omitted
+  let authToken = options.authToken || process.env.X_AUTH_TOKEN;
+  let ct0 = options.ct0 || process.env.X_CT0;
+
+  if (!authToken || !ct0) {
+    const stored = loadSession();
+    if (stored) {
+      authToken = authToken || stored.authToken;
+      ct0 = ct0 || stored.ct0;
+    }
+  }
 
   if (onProgress) {
     onProgress({ type: 'init', tweetId: postId, targetUrl });
@@ -50,20 +63,20 @@ export async function scrapePost(options = {}) {
 
     // Set auth cookies if provided
     const cookies = [];
-    if (options.authToken) {
+    if (authToken) {
       cookies.push({
         name: 'auth_token',
-        value: options.authToken,
+        value: authToken,
         domain: '.x.com',
         path: '/',
         secure: true,
         httpOnly: true,
       });
     }
-    if (options.ct0) {
+    if (ct0) {
       cookies.push({
         name: 'ct0',
-        value: options.ct0,
+        value: ct0,
         domain: '.x.com',
         path: '/',
         secure: true,
@@ -73,6 +86,7 @@ export async function scrapePost(options = {}) {
     if (cookies.length > 0) {
       await context.setCookie(...cookies);
     }
+
 
     // Intercept GraphQL network responses
     page.on('response', async (response) => {

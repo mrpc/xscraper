@@ -41,6 +41,7 @@ export async function getBrowser(customOptions = {}) {
   try {
     const executablePath = customOptions.executablePath || findChromiumPath();
 
+    const isHeadless = customOptions.headless !== undefined ? customOptions.headless : true;
     const args = [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -48,12 +49,13 @@ export async function getBrowser(customOptions = {}) {
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
-      '--disable-gpu',
-      '--hide-scrollbars',
-      '--mute-audio',
-      '--window-size=1920,1080',
+      '--window-size=1280,800',
       ...(customOptions.args || []),
     ];
+
+    if (isHeadless) {
+      args.push('--disable-gpu', '--hide-scrollbars', '--mute-audio');
+    }
 
     if (customOptions.proxy) {
       args.push(`--proxy-server=${customOptions.proxy}`);
@@ -61,9 +63,9 @@ export async function getBrowser(customOptions = {}) {
 
     sharedBrowser = await puppeteer.launch({
       executablePath,
-      headless: true,
+      headless: isHeadless,
       args,
-      defaultViewport: { width: 1920, height: 1080 },
+      defaultViewport: isHeadless ? { width: 1280, height: 800 } : null,
     });
 
     sharedBrowser.on('disconnected', () => {
@@ -75,6 +77,42 @@ export async function getBrowser(customOptions = {}) {
     isLaunching = false;
   }
 }
+
+/**
+ * Launches a separate, dedicated browser instance (e.g. for headed interactive login).
+ *
+ * @param {object} customOptions
+ * @returns {Promise<import('puppeteer-core').Browser>}
+ */
+export async function launchDedicatedBrowser(customOptions = {}) {
+  const executablePath = customOptions.executablePath || findChromiumPath();
+  const isHeadless = customOptions.headless !== undefined ? customOptions.headless : false;
+
+  const args = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--no-first-run',
+    '--window-size=1280,850',
+    ...(customOptions.args || []),
+  ];
+
+  if (isHeadless) {
+    args.push('--disable-gpu', '--hide-scrollbars', '--mute-audio');
+  }
+
+  if (customOptions.proxy) {
+    args.push(`--proxy-server=${customOptions.proxy}`);
+  }
+
+  return await puppeteer.launch({
+    executablePath,
+    headless: isHeadless,
+    args,
+    defaultViewport: isHeadless ? { width: 1280, height: 850 } : null,
+  });
+}
+
 
 export async function closeBrowser() {
   if (sharedBrowser) {

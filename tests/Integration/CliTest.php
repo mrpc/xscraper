@@ -74,7 +74,7 @@ final class CliTest extends TestCase
     }
 
     /**
-     * Verifies that --chrome option is documented in CLI help output.
+     * Verifies that --chrome, login, session and logout commands are documented in CLI help output.
      */
     public function testChromeOptionInHelp(): void
     {
@@ -84,7 +84,11 @@ final class CliTest extends TestCase
         // Assert
         $this->assertIsString($output);
         $this->assertStringContainsString('--chrome[=URL]', $output);
+        $this->assertStringContainsString('bin/xscraper login [options]', $output);
+        $this->assertStringContainsString('bin/xscraper session [options]', $output);
+        $this->assertStringContainsString('bin/xscraper logout [options]', $output);
     }
 }
+
 
 

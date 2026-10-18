@@ -146,4 +146,24 @@ describe('HTTP and WebSocket Server', () => {
 
     ws.close();
   });
+
+  test('GET /session returns session status and POST /logout clears it', async () => {
+    // Initial session status
+    const res1 = await fetch(`${baseUrl}/session`);
+    assert.equal(res1.status, 200);
+    const body1 = await res1.json();
+    assert.ok('loggedIn' in body1);
+
+    // Logout
+    const resLogout = await fetch(`${baseUrl}/logout`, { method: 'POST' });
+    assert.equal(resLogout.status, 200);
+    const logoutBody = await resLogout.json();
+    assert.ok(logoutBody.success !== undefined);
+
+    // After logout, session is not logged in
+    const res2 = await fetch(`${baseUrl}/session`);
+    const body2 = await res2.json();
+    assert.equal(body2.loggedIn, false);
+  });
 });
+

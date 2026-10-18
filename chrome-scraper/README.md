@@ -8,12 +8,13 @@ Designed to run in its own Docker container and communicate with the main PHP li
 
 ## Features
 
-- **Headless Chrome Automation:** Uses `puppeteer-core` with system Chromium to navigate and interact with x.com.
+- **Headless & Headed Chrome Automation:** Uses `puppeteer-core` with system Chromium. Supports automated login in visible (headed) or headless modes.
+- **Automated Login & Session Persistence:** Automates x.com authentication, solves secondary challenges, extracts cookies (`auth_token`, `ct0`), and persists them in `/app/data/session.json`.
 - **GraphQL Response Interception:** Intercepts real `TweetDetail` and `TweetResultByRestId` network responses directly from X's client-side app.
 - **Dynamic Scrolling:** Automatically scrolls the thread to trigger reply loading until the requested limit is reached.
-- **Cookie & Session Binding:** Supports `auth_token` and `ct0` session injection per scrape job inside isolated browser contexts.
+- **Auto Session Resolution:** Automatically uses stored session cookies if not passed explicitly in scrape requests.
 - **Dual Communication Protocol:**
-  - **REST API:** `POST /scrape` for synchronous request-response jobs.
+  - **REST API:** `POST /scrape`, `POST /login`, `GET /session`, `POST /logout`.
   - **WebSocket:** `ws://.../ws` for real-time progress and payload streaming.
 - **DOM Fallback:** Extracts rendered tweet elements directly from the DOM as a backup mechanism.
 
@@ -21,7 +22,7 @@ Designed to run in its own Docker container and communicate with the main PHP li
 
 ## API Reference
 
-### 1. Health Check
+### 1. Health & Session Check
 
 ```http
 GET /health
@@ -33,9 +34,56 @@ GET /health
   "status": "ok",
   "uptime": 120,
   "browserHealthy": true,
-  "timestamp": "2026-10-17T12:00:00.000Z"
+  "timestamp": "2026-10-18T12:00:00.000Z"
 }
 ```
+
+```http
+GET /session
+```
+
+**Response (200 OK):**
+```json
+{
+  "loggedIn": true,
+  "username": "myuser",
+  "savedAt": "2026-10-18T13:00:00.000Z",
+  "hasAuthToken": true,
+  "hasCt0": true
+}
+```
+
+---
+
+### 2. Automated or Headed Login
+
+```http
+POST /login
+Content-Type: application/json
+```
+
+**Request Payload:**
+```json
+{
+  "username": "my_x_username",
+  "password": "my_x_password",
+  "confirmation": "optional_email_or_phone_if_challenged",
+  "headed": true,
+  "timeoutMs": 120000
+}
+```
+
+- When `"headed": true` is specified, Chrome launches with a visible window on the screen (`DISPLAY=:0`), allowing you to complete 2FA or Captchas if prompted.
+- The session is saved to `/app/data/session.json` and reused automatically for subsequent scrapes.
+
+---
+
+### 3. Clear Stored Session
+
+```http
+POST /logout
+```
+
 
 ---
 

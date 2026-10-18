@@ -22,9 +22,14 @@ services:
     container_name: xscraper_chrome
     ports:
       - "3000:3000"
+    volumes:
+      - ./chrome-scraper/data:/app/data
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
     environment:
       - PORT=3000
       - HOST=0.0.0.0
+      - DATA_DIR=/app/data
+      - DISPLAY=${DISPLAY:-:0}
     init: true
     networks:
       - xscraper-network

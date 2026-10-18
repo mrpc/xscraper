@@ -287,4 +287,112 @@ final class ChromeBridgeTest extends TestCase
         // Assert
         $this->assertSame('http://127.0.0.1:3000', $bridge->serviceUrl());
     }
+
+    /**
+     * Verifies successful automated login request dispatch to the Chrome microservice.
+     */
+    public function testLoginSuccess(): void
+    {
+        // Arrange
+        $transport = $this->createMock(Transport::class);
+        $expectedResponse = [
+            'success' => true,
+            'message' => 'Logged in successfully',
+            'username' => 'testuser',
+            'hasAuthToken' => true,
+            'hasCt0' => true,
+        ];
+
+        $transport->expects($this->once())
+            ->method('send')
+            ->with($this->callback(function (HttpRequest $req) {
+                return $req->method === 'POST'
+                    && str_contains($req->url, '/login')
+                    && str_contains($req->body, 'testuser');
+            }))
+            ->willReturn(new HttpResponse(200, [], (string) json_encode($expectedResponse)));
+
+        $bridge = new ChromeBridge('http://chrome-scraper:3000', $transport);
+
+        // Act
+        $result = $bridge->login('testuser', 'secret123', 'confirm@test.com', headed: true);
+
+        // Assert
+        $this->assertTrue($result['success']);
+        $this->assertSame('testuser', $result['username']);
+    }
+
+    /**
+     * Verifies that login failure throws ResponseException.
+     */
+    public function testLoginThrowsResponseExceptionOnFailure(): void
+    {
+        // Arrange
+        $transport = $this->createMock(Transport::class);
+        $transport->method('send')
+            ->willReturn(new HttpResponse(401, [], '{"success":false,"error":"Invalid credentials"}'));
+
+        $bridge = new ChromeBridge('http://chrome-scraper:3000', $transport);
+
+        // Assert
+        $this->expectException(ResponseException::class);
+        $this->expectExceptionMessage('Invalid credentials');
+
+        // Act
+        $bridge->login('testuser', 'wrongpass');
+    }
+
+    /**
+     * Verifies getSession retrieves current session status and returns null on error.
+     */
+    public function testGetSessionStatus(): void
+    {
+        // Arrange
+        $transport = $this->createMock(Transport::class);
+        $transport->expects($this->exactly(3))
+            ->method('send')
+            ->willReturnOnConsecutiveCalls(
+                new HttpResponse(200, [], '{"loggedIn":true,"username":"jack"}'),
+                new HttpResponse(500, [], '{"error":"server error"}'),
+                new HttpResponse(200, [], 'not json'),
+            );
+
+        $bridge = new ChromeBridge('http://chrome-scraper:3000', $transport);
+
+        // Act & Assert (valid session)
+        $session = $bridge->getSession();
+        $this->assertIsArray($session);
+        $this->assertTrue($session['loggedIn']);
+        $this->assertSame('jack', $session['username']);
+
+        // Act & Assert (HTTP 500 error)
+        $this->assertNull($bridge->getSession());
+
+        // Act & Assert (invalid JSON response)
+        $this->assertNull($bridge->getSession());
+    }
+
+    /**
+     * Verifies logout requests and response handling.
+     */
+    public function testLogout(): void
+    {
+        // Arrange
+        $transport = $this->createMock(Transport::class);
+        $transport->expects($this->exactly(2))
+            ->method('send')
+            ->willReturnOnConsecutiveCalls(
+                new HttpResponse(200, [], '{"success":true}'),
+                new HttpResponse(500, [], '{"success":false}'),
+            );
+
+        $bridge = new ChromeBridge('http://chrome-scraper:3000', $transport);
+
+        // Act & Assert (successful logout)
+        $this->assertTrue($bridge->logout());
+
+        // Act & Assert (failed logout)
+        $this->assertFalse($bridge->logout());
+    }
 }
+

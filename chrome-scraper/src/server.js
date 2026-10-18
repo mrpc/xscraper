@@ -3,6 +3,8 @@ import { createServer } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { isBrowserHealthy, closeBrowser } from './browser.js';
 import { scrapePost, extractPostId } from './scraper.js';
+import { performLogin } from './auth.js';
+import { getSessionStatus, clearSession } from './session.js';
 
 export function createApp() {
   const app = express();
@@ -17,6 +19,9 @@ export function createApp() {
       endpoints: {
         'GET /health': 'Health check status',
         'POST /scrape': 'Scrape a post or conversation (JSON body: url, authToken, ct0, maxScrolls, timeout)',
+        'POST /login': 'Automated or headed login to x.com (JSON body: username, password, confirmation, headed, timeoutMs)',
+        'GET /session': 'Check currently stored session status',
+        'POST /logout': 'Clear stored session',
         'WS /ws': 'WebSocket streaming endpoint for live scraping progress and events',
       },
     });
@@ -31,6 +36,47 @@ export function createApp() {
       browserHealthy: healthy,
       timestamp: new Date().toISOString(),
     });
+  });
+
+  // Session status endpoint
+  app.get('/session', (_req, res) => {
+    const status = getSessionStatus();
+    res.json(status);
+  });
+
+  // Logout endpoint
+  app.post('/logout', (_req, res) => {
+    const success = clearSession();
+    res.json({ success, message: success ? 'Session cleared' : 'No session to clear' });
+  });
+
+  // Login endpoint
+  app.post('/login', async (req, res) => {
+    const { username, password, confirmation, headed, timeoutMs, proxy } = req.body || {};
+
+    try {
+      const result = await performLogin({
+        username,
+        password,
+        confirmation,
+        headed,
+        timeoutMs,
+        proxy,
+      });
+
+      return res.json({
+        success: true,
+        message: 'Logged in successfully',
+        username: result.username,
+        hasAuthToken: Boolean(result.authToken),
+        hasCt0: Boolean(result.ct0),
+      });
+    } catch (err) {
+      return res.status(401).json({
+        success: false,
+        error: err.message || 'Login failed',
+      });
+    }
   });
 
   // HTTP Scrape endpoint
@@ -69,6 +115,7 @@ export function createApp() {
 
   return app;
 }
+
 
 export function startServer(port = 3000, host = '0.0.0.0') {
   const app = createApp();
@@ -114,7 +161,29 @@ export function startServer(port = 3000, host = '0.0.0.0') {
         return;
       }
 
+      if (message.action === 'login') {
+        try {
+          const res = await performLogin({
+            ...message,
+            onProgress: (evt) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(evt));
+              }
+            },
+          });
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'login_complete', result: res }));
+          }
+        } catch (err) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'error', error: err.message }));
+          }
+        }
+        return;
+      }
+
       ws.send(JSON.stringify({ type: 'error', error: `Unknown action: "${message.action}"` }));
+
     });
   });
 

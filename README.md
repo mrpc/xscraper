@@ -171,7 +171,20 @@ bin/xscraper get 1845187747970863384 --proxy="socks5://127.0.0.1:9050"
 # Delegate scraping to autonomous Headless Chrome microservice
 bin/xscraper get 1845187747970863384 --chrome
 bin/xscraper get 1845187747970863384 --chrome=http://127.0.0.1:3000
+
+# Automated login via Chrome microservice (saves session automatically)
+bin/xscraper login --username="my_username" --password="my_password"
+
+# Interactive login in visible Chrome window (headed mode to solve 2FA/Captchas)
+bin/xscraper login --headed
+
+# Check active stored session on Chrome service
+bin/xscraper session
+
+# Clear stored session
+bin/xscraper logout
 ```
+
 
 ---
 

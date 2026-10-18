@@ -43,6 +43,15 @@ xscraper - Read x.com posts and replies without the official API.
 
 Usage:
   bin/xscraper get <post-id-or-url> [options]
+  bin/xscraper login [options]
+  bin/xscraper session [options]
+  bin/xscraper logout [options]
+
+Commands:
+  get <url|id>                     Fetch tweet and conversation replies
+  login                            Automated or headed login to x.com
+  session                          Show current session status on Chrome service
+  logout                           Clear stored session on Chrome service
 
 Options:
   --mode=smart|cache|refresh|full  Fetch strategy (default: smart)
@@ -52,13 +61,18 @@ Options:
   --auth-token=TOKEN               X auth_token cookie
   --ct0=CT0                        X ct0 cookie (CSRF token)
   --cookie-header=HEADER           Raw Cookie header containing auth_token and ct0
+  --username=USER                  Username / handle for login
+  --password=PASS                  Account password for login
+  --confirmation=TEXT              Email or phone for verification challenges
+  --headed                         Launch visible browser window for login
+  --headless                       Run login purely headless
   --proxy=URL                      Outbound HTTP/SOCKS proxy
   --storage-dir=DIR                Directory for cache, locks and throttle state
   --chrome[=URL]                   Delegate scrape to headless Chrome service (default: http://127.0.0.1:3000)
   -h, --help                       Show this help message
 
 Environment variables:
-  X_AUTH_TOKEN, X_CT0, X_COOKIES, HTTPS_PROXY, CHROME_SCRAPER_URL
+  X_AUTH_TOKEN, X_CT0, X_COOKIES, X_USERNAME, X_PASSWORD, X_EMAIL, HTTPS_PROXY, CHROME_SCRAPER_URL
 
 USAGE;
 }
@@ -72,21 +86,17 @@ if (empty($argvCopy) || in_array('-h', $argvCopy, true) || in_array('--help', $a
 }
 
 $command = array_shift($argvCopy);
-if ($command !== 'get') {
-    // If first argument is a tweet URL or ID directly
-    if (str_starts_with($command, 'http') || ctype_digit($command)) {
-        $target = $command;
-    } else {
-        fwrite(STDERR, "Unknown command '{$command}'. Run with --help for usage.\n");
-        exit(1);
-    }
-} else {
-    $target = array_shift($argvCopy) ?? '';
-}
+$target = '';
 
-if ($target === '') {
-    fwrite(STDERR, "Error: Missing post ID or URL.\n");
-    printUsage();
+if ($command === 'get') {
+    $target = array_shift($argvCopy) ?? '';
+} elseif ($command === 'login' || $command === 'session' || $command === 'logout') {
+    // subcommands handled below
+} elseif (str_starts_with($command, 'http') || ctype_digit($command)) {
+    $target = $command;
+    $command = 'get';
+} else {
+    fwrite(STDERR, "Unknown command '{$command}'. Run with --help for usage.\n");
     exit(1);
 }
 
@@ -102,6 +112,10 @@ $options = [
     'proxy' => null,
     'storage-dir' => null,
     'chrome' => null,
+    'username' => null,
+    'password' => null,
+    'confirmation' => null,
+    'headed' => null,
 ];
 
 foreach ($argvCopy as $arg) {
@@ -111,6 +125,16 @@ foreach ($argvCopy as $arg) {
         $options['chrome'] = true;
     } elseif (str_starts_with($arg, '--chrome=')) {
         $options['chrome'] = substr($arg, 9);
+    } elseif ($arg === '--headed') {
+        $options['headed'] = true;
+    } elseif ($arg === '--headless') {
+        $options['headed'] = false;
+    } elseif (str_starts_with($arg, '--username=')) {
+        $options['username'] = substr($arg, 11);
+    } elseif (str_starts_with($arg, '--password=')) {
+        $options['password'] = substr($arg, 11);
+    } elseif (str_starts_with($arg, '--confirmation=')) {
+        $options['confirmation'] = substr($arg, 15);
     } elseif (str_starts_with($arg, '--mode=')) {
         $options['mode'] = substr($arg, 7);
     } elseif (str_starts_with($arg, '--max-replies=')) {
@@ -130,20 +154,85 @@ foreach ($argvCopy as $arg) {
     }
 }
 
+$proxy = $options['proxy'] ?? getenv('HTTPS_PROXY') ?: getenv('https_proxy') ?: null;
+$chromeUrl = is_string($options['chrome']) && $options['chrome'] !== ''
+    ? $options['chrome']
+    : (getenv('CHROME_SCRAPER_URL') ?: 'http://127.0.0.1:3000');
+
+// Handle session command
+if ($command === 'session') {
+    $bridge = new \Mrpc\XScraper\Bridge\ChromeBridge($chromeUrl);
+    $status = $bridge->getSession();
+    if ($status === null) {
+        fwrite(STDERR, "Could not contact Chrome scraper service at {$chromeUrl}\n");
+        exit(1);
+    }
+    echo json_encode($status, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+    exit(0);
+}
+
+// Handle logout command
+if ($command === 'logout') {
+    $bridge = new \Mrpc\XScraper\Bridge\ChromeBridge($chromeUrl);
+    $ok = $bridge->logout();
+    echo $ok ? "Session successfully cleared on Chrome service.\n" : "Failed to clear session.\n";
+    exit($ok ? 0 : 1);
+}
+
+// Handle login command
+if ($command === 'login') {
+    $username = $options['username'] ?? getenv('X_USERNAME') ?: null;
+    $password = $options['password'] ?? getenv('X_PASSWORD') ?: null;
+    $confirmation = $options['confirmation'] ?? getenv('X_EMAIL') ?: getenv('X_PHONE') ?: null;
+    $headed = $options['headed'];
+
+    echo "[xscraper] Initiating login via Chrome service ({$chromeUrl})...\n";
+    $bridge = new \Mrpc\XScraper\Bridge\ChromeBridge($chromeUrl);
+    try {
+        $res = $bridge->login(
+            username: $username,
+            password: $password,
+            confirmation: $confirmation,
+            headed: $headed,
+            proxy: is_string($proxy) && $proxy !== '' ? $proxy : null,
+        );
+        echo "[xscraper] Login successful! Session stored for: " . ($res['username'] ?? 'user') . "\n";
+        exit(0);
+    } catch (\Throwable $e) {
+        fwrite(STDERR, "[xscraper] Login failed: " . $e->getMessage() . "\n");
+        exit(1);
+    }
+}
+
+if ($target === '') {
+    fwrite(STDERR, "Error: Missing post ID or URL.\n");
+    printUsage();
+    exit(1);
+}
+
 // Build session
+$session = null;
 try {
     if ($options['cookie-header'] !== null) {
         $session = Session::fromCookieHeader($options['cookie-header']);
     } elseif ($options['auth-token'] !== null && $options['ct0'] !== null) {
         $session = new Session($options['auth-token'], $options['ct0']);
-    } else {
+    } elseif (getenv('X_AUTH_TOKEN') && getenv('X_CT0')) {
         $session = Session::fromEnvironment();
     }
 } catch (\Throwable $e) {
-    fwrite(STDERR, "Authentication error: " . $e->getMessage() . "\n");
-    fwrite(STDERR, "Provide --auth-token and --ct0, or set X_AUTH_TOKEN and X_CT0 environment variables.\n");
+    if ($options['chrome'] === null) {
+        fwrite(STDERR, "Authentication error: " . $e->getMessage() . "\n");
+        exit(2);
+    }
+}
+
+if ($session === null && $options['chrome'] === null) {
+    fwrite(STDERR, "Authentication error: Missing X session credentials.\n");
+    fwrite(STDERR, "Run 'bin/xscraper login' or provide --auth-token and --ct0.\n");
     exit(2);
 }
+
 
 $fetchMode = match (strtolower((string) $options['mode'])) {
     'cache' => FetchMode::CacheOnly,

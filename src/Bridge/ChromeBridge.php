@@ -76,6 +76,106 @@ class ChromeBridge
     }
 
     /**
+     * Triggers an automated or headed login flow on x.com via the Chrome scraper.
+     *
+     * @param string|null $username Username, email or handle
+     * @param string|null $password Account password
+     * @param string|null $confirmation Secondary verification (phone or email)
+     * @param bool|null $headed Force headed (visible browser) or headless mode
+     * @param int $timeout Timeout in seconds
+     * @param string|null $proxy Outbound proxy
+     * @return array<string,mixed>
+     *
+     * @throws ResponseException on login failure
+     */
+    public function login(
+        ?string $username = null,
+        ?string $password = null,
+        ?string $confirmation = null,
+        ?bool $headed = null,
+        int $timeout = 120,
+        ?string $proxy = null,
+    ): array {
+        $payload = [
+            'username' => $username,
+            'password' => $password,
+            'confirmation' => $confirmation,
+            'headed' => $headed,
+            'timeoutMs' => max(10, $timeout) * 1000,
+            'proxy' => $proxy,
+        ];
+
+        $request = new HttpRequest(
+            'POST',
+            $this->serviceUrl . '/login',
+            [
+                ['Content-Type', 'application/json'],
+                ['Accept', 'application/json'],
+            ],
+            body: json_encode($payload, JSON_THROW_ON_ERROR),
+            timeout: $timeout + 10,
+        );
+
+        $response = $this->transport->send($request);
+        $json = $response->json();
+
+        if ($response->status !== 200 || !is_array($json) || !($json['success'] ?? false)) {
+            $msg = is_array($json) && isset($json['error'])
+                ? (string) $json['error']
+                : "Login failed with HTTP {$response->status}";
+            throw new ResponseException($msg);
+        }
+
+        return $json;
+    }
+
+    /**
+     * Checks the currently stored session status on the Chrome scraper.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function getSession(): ?array
+    {
+        try {
+            $request = new HttpRequest(
+                'GET',
+                $this->serviceUrl . '/session',
+                [['Accept', 'application/json']],
+                timeout: 5,
+            );
+            $response = $this->transport->send($request);
+            if ($response->status !== 200) {
+                return null;
+            }
+            $json = $response->json();
+            return is_array($json) ? $json : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Clears the stored session on the Chrome scraper.
+     */
+    public function logout(): bool
+    {
+        try {
+            $request = new HttpRequest(
+                'POST',
+                $this->serviceUrl . '/logout',
+                [['Accept', 'application/json']],
+                timeout: 5,
+            );
+            $response = $this->transport->send($request);
+            $json = $response->json();
+            return $response->status === 200 && is_array($json) && ($json['success'] ?? false);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+
+    /**
      * Delegates scraping of a post and its replies to the headless Chrome service.
      *
      * @throws TweetNotFoundException if tweet could not be found or extracted
