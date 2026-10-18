@@ -4,7 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { isBrowserHealthy, closeBrowser } from './browser.js';
 import { scrapePost, extractPostId } from './scraper.js';
 import { performLogin } from './auth.js';
-import { getSessionStatus, clearSession } from './session.js';
+import { getSessionStatus, clearSession, saveSession } from './session.js';
 
 export function createApp() {
   const app = express();
@@ -42,6 +42,16 @@ export function createApp() {
   app.get('/session', (_req, res) => {
     const status = getSessionStatus();
     res.json(status);
+  });
+
+  // Set session endpoint (allows direct cookie import)
+  app.post('/session', (req, res) => {
+    const { authToken, ct0, username, cookies } = req.body || {};
+    if (!authToken || !ct0) {
+      return res.status(400).json({ error: 'authToken and ct0 are required' });
+    }
+    const success = saveSession({ authToken, ct0, username, cookies });
+    res.json({ success, message: success ? 'Session saved' : 'Failed to save session' });
   });
 
   // Logout endpoint

@@ -94,47 +94,69 @@ export async function performLogin(options = {}) {
       'Accept-Language': 'en-US,en;q=0.9',
     });
 
-    // Mask automation detection signals so x.com does not freeze or block JS execution
+    // Only mask navigator.webdriver if present without modifying native plugins/chrome objects
     await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
-      });
-      window.chrome = {
-        runtime: {},
-        loadTimes: function () {},
-        csi: function () {},
-        app: {},
-      };
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5],
-      });
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en'],
-      });
+      delete Object.getPrototypeOf(navigator).webdriver;
     });
 
-    // Monitor onboarding API network responses to see exact X server instructions/errors
+    // Monitor onboarding and security/fraud API network responses (including jf.x.com)
     page.on('response', async (res) => {
       const url = res.url();
-      if (url.includes('/onboarding/task.json') || url.includes('/onboarding/flow.json')) {
+      const isMonitored =
+        url.includes('/onboarding/') ||
+        url.includes('jf.x.com') ||
+        url.includes('/auth/') ||
+        url.includes('/login');
+
+      if (!isMonitored) {
+        return;
+      }
+
+      try {
+        const status = res.status();
+        let subtasks = null;
+        let errors = null;
+
         try {
           const json = await res.json();
-          const flowToken = json.flow_token ? 'present' : 'none';
-          const subtasks = json.subtasks ? json.subtasks.map((s) => s.subtask_id).join(', ') : 'none';
-          console.log(`[x-login-api] Status ${res.status()} - Subtasks: [${subtasks}]`);
-          if (json.errors && json.errors.length > 0) {
-            console.log(`[x-login-api] Errors:`, JSON.stringify(json.errors));
+          if (json.subtasks) {
+            subtasks = json.subtasks.map((s) => s.subtask_id).join(', ');
           }
+          if (json.errors && json.errors.length > 0) {
+            errors = json.errors.map((e) => (typeof e === 'string' ? e : e.message || JSON.stringify(e))).join(' | ');
+          }
+        } catch {
+          // If response is not standard JSON (e.g. binary-framed jf.x.com responses), extract text
+          try {
+            const raw = await res.text();
+            if (raw.includes('Sorry, you are not allowed') || raw.includes('error') || status >= 400) {
+              const match = raw.match(/Sorry,[^!.\r\n]+[.!]/i) || raw.match(/errors[0-9]*([^!.\r\n]+[.!])/i);
+              errors = match ? (match[1] || match[0]).trim() : `Security check failed (HTTP ${status})`;
+            }
+          } catch {}
+        }
+
+        if (subtasks) {
+          console.log(`[x-login-api] Status ${status} - Subtasks: [${subtasks}]`);
           onProgress({
             event: 'api',
             stage: 'x_api_step',
-            status: res.status(),
+            status,
             subtasks,
-            errors: json.errors || null,
           });
-        } catch {
-          // Ignore non-json
         }
+
+        if (errors) {
+          console.log(`[x-login-api] Error: ${errors}`);
+          onProgress({
+            event: 'api_error',
+            stage: 'x_api_error',
+            status,
+            errors,
+          });
+        }
+      } catch {
+        // Ignore response inspection errors
       }
     });
 
@@ -147,6 +169,10 @@ export async function performLogin(options = {}) {
           message: text.slice(0, 150),
         });
       }
+    });
+
+    page.on('pageerror', (err) => {
+      console.log(`[browser-pageerror] ${err.message}`);
     });
 
 

@@ -164,6 +164,33 @@ describe('HTTP and WebSocket Server', () => {
     const res2 = await fetch(`${baseUrl}/session`);
     const body2 = await res2.json();
     assert.equal(body2.loggedIn, false);
+
+    // POST /session validation error
+    const resBad = await fetch(`${baseUrl}/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authToken: 'only-token' }),
+    });
+    assert.equal(resBad.status, 400);
+
+    // POST /session successful save
+    const resSet = await fetch(`${baseUrl}/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authToken: 'mytoken', ct0: 'myct0', username: 'directuser' }),
+    });
+    assert.equal(resSet.status, 200);
+    const setBody = await resSet.json();
+    assert.equal(setBody.success, true);
+
+    // Check status reflects newly set session
+    const res3 = await fetch(`${baseUrl}/session`);
+    const body3 = await res3.json();
+    assert.equal(body3.loggedIn, true);
+    assert.equal(body3.username, 'directuser');
+
+    // Clean up
+    await fetch(`${baseUrl}/logout`, { method: 'POST' });
   });
 });
 

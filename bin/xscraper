@@ -205,11 +205,18 @@ if ($command === 'login') {
                 if (isset($evt['subtasks']) && $evt['subtasks'] !== 'none') {
                     echo "[x-api] Current step: " . $evt['subtasks'] . "\n";
                 }
-                if (isset($evt['errors']) && is_array($evt['errors'])) {
-                    foreach ($evt['errors'] as $err) {
-                        $errMsg = is_array($err) ? ($err['message'] ?? json_encode($err)) : (string) $err;
-                        echo "[x-api-error] " . $errMsg . "\n";
+                if (isset($evt['errors'])) {
+                    if (is_array($evt['errors'])) {
+                        foreach ($evt['errors'] as $err) {
+                            $errMsg = is_array($err) ? ($err['message'] ?? json_encode($err)) : (string) $err;
+                            echo "[x-api-error] " . $errMsg . "\n";
+                        }
+                    } else {
+                        echo "[x-api-error] " . (string) $evt['errors'] . "\n";
                     }
+                }
+                if (isset($evt['error']) && !isset($evt['errors'])) {
+                    echo "[x-api-error] " . (string) $evt['error'] . "\n";
                 }
                 if (ob_get_level() > 0) {
                     ob_flush();
