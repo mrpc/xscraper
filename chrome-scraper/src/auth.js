@@ -185,15 +185,28 @@ export async function performLogin(options = {}) {
     });
 
 
-    onProgress({ event: 'status', stage: 'navigating', url: 'https://x.com/i/flow/login' });
-    await page.goto('https://x.com/i/flow/login', {
-      waitUntil: 'domcontentloaded',
-      timeout: 45000,
-    });
+    const shouldWarmup = options.warmup !== false;
 
+    if (shouldWarmup) {
+      onProgress({ event: 'status', stage: 'warming_up', message: 'Browsing x.com explore to warm up visitor cookies and telemetry...' });
+      try {
+        await page.goto('https://x.com/explore', {
+          waitUntil: 'domcontentloaded',
+          timeout: 30000,
+        });
 
+        // Human-like interaction: delay, mouse movement, scroll feed
+        await new Promise((r) => setTimeout(r, 1500));
+        await page.mouse.move(250, 300);
+        await page.evaluate(() => window.scrollBy({ top: 400, behavior: 'smooth' }));
+        await new Promise((r) => setTimeout(r, 1200));
+        await page.mouse.move(450, 280);
+      } catch {
+        // Non-fatal, proceed with login flow
+      }
+    }
 
-    // Check if user is already authenticated
+    // Check if user is already authenticated from persistent profile
     let cookies = await page.cookies();
     let authTokenCookie = cookies.find((c) => c.name === 'auth_token');
     let ct0Cookie = cookies.find((c) => c.name === 'ct0');
@@ -212,6 +225,34 @@ export async function performLogin(options = {}) {
         authToken: authTokenCookie.value,
         ct0: ct0Cookie.value,
       };
+    }
+
+    onProgress({ event: 'status', stage: 'opening_login', message: 'Opening login dialog...' });
+    let loginOpened = false;
+
+    if (shouldWarmup && page.url().includes('x.com')) {
+      try {
+        const signInBtn =
+          (await page.$('a[href="/login"]')) ||
+          (await page.$('a[href="/i/flow/login"]')) ||
+          (await findButtonByText(page, 'Sign in')) ||
+          (await findButtonByText(page, 'Log in'));
+
+        if (signInBtn) {
+          await signInBtn.click();
+          loginOpened = true;
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      } catch {
+        // Fallback to direct navigation
+      }
+    }
+
+    if (!loginOpened || !page.url().includes('login')) {
+      await page.goto('https://x.com/i/flow/login', {
+        waitUntil: 'domcontentloaded',
+        timeout: 45000,
+      });
     }
 
     onProgress({
