@@ -32,28 +32,7 @@ Optional:
 
 ## Installation
 
-### Via GitHub (VCS Repository)
-
-Add the repository to your project's `composer.json`:
-
-```json
-"repositories": [
-    {
-        "type": "vcs",
-        "url": "https://github.com/mrpc/xscraper.git"
-    }
-]
-```
-
-Then require the package:
-
-```bash
-composer require mrpc/xscraper:dev-main
-```
-
-### Via Packagist
-
-Once submitted to [Packagist](https://packagist.org/):
+Install via [Composer](https://packagist.org/packages/mrpc/xscraper):
 
 ```bash
 composer require mrpc/xscraper
