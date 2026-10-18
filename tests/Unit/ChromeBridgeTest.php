@@ -485,6 +485,74 @@ final class ChromeBridgeTest extends TestCase
         $this->assertTrue($result['success']);
         $this->assertSame('streamuser', $result['username']);
     }
+
+    /**
+     * Verifies that login() succeeds with optional proxy and confirmation parameters.
+     */
+    public function testLoginWithProxyAndOptionsSuccess(): void
+    {
+        // Arrange
+        $transport = $this->createMock(Transport::class);
+        $transport->method('send')
+            ->willReturn(new HttpResponse(200, [], '{"success":true,"username":"testuser","authToken":"tok123"}'));
+
+        $bridge = new ChromeBridge('http://chrome-scraper:3000', $transport);
+
+        // Act
+        $res = $bridge->login(
+            username: 'testuser',
+            password: 'secretpassword',
+            confirmation: 'confirm',
+            headed: false,
+            timeout: 60,
+            proxy: 'http://proxy.test:8080'
+        );
+
+        // Assert
+        $this->assertTrue($res['success']);
+        $this->assertSame('testuser', $res['username']);
+        $this->assertSame('tok123', $res['authToken']);
+    }
+
+    /**
+     * Verifies that login() throws ResponseException when service returns an error field.
+     */
+    public function testLoginFailureWithErrorField(): void
+    {
+        // Arrange
+        $transport = $this->createMock(Transport::class);
+        $transport->method('send')
+            ->willReturn(new HttpResponse(200, [], '{"success":false,"error":"Invalid credentials"}'));
+
+        $bridge = new ChromeBridge('http://chrome-scraper:3000', $transport);
+
+        // Assert
+        $this->expectException(ResponseException::class);
+        $this->expectExceptionMessage('Invalid credentials');
+
+        // Act
+        $bridge->login(username: 'wronguser');
+    }
+
+    /**
+     * Verifies that login() throws ResponseException with status code when non-200 and no error message.
+     */
+    public function testLoginFailureWithNon200Status(): void
+    {
+        // Arrange
+        $transport = $this->createMock(Transport::class);
+        $transport->method('send')
+            ->willReturn(new HttpResponse(502, [], 'bad gateway'));
+
+        $bridge = new ChromeBridge('http://chrome-scraper:3000', $transport);
+
+        // Assert
+        $this->expectException(ResponseException::class);
+        $this->expectExceptionMessage('Login failed with HTTP 502');
+
+        // Act
+        $bridge->login(username: 'user');
+    }
 }
 
 

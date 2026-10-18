@@ -207,6 +207,9 @@ class ChromeBridge
             return $this->login($username, $password, $confirmation, $headed, $timeout, $proxy);
         }
 
+        @stream_set_read_buffer($fp, 0);
+        @stream_set_chunk_size($fp, 1);
+
         $linesGenerator = (function () use ($fp) {
             try {
                 while (!feof($fp)) {

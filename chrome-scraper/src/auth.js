@@ -99,6 +99,8 @@ export async function performLogin(options = {}) {
       delete Object.getPrototypeOf(navigator).webdriver;
     });
 
+    let fatalSecurityError = null;
+
     // Monitor onboarding and security/fraud API network responses (including jf.x.com)
     page.on('response', async (res) => {
       const url = res.url();
@@ -129,8 +131,8 @@ export async function performLogin(options = {}) {
           // If response is not standard JSON (e.g. binary-framed jf.x.com responses), extract text
           try {
             const raw = await res.text();
-            if (raw.includes('Sorry, you are not allowed') || raw.includes('error') || status >= 400) {
-              const match = raw.match(/Sorry,[^!.\r\n]+[.!]/i) || raw.match(/errors[0-9]*([^!.\r\n]+[.!])/i);
+            if (raw.includes('Sorry, you are not allowed') || raw.includes('temporarily limited') || raw.includes('error') || status >= 400) {
+              const match = raw.match(/Sorry,[^!.\r\n]+[.!]/i) || raw.match(/temporarily limited[^!.\r\n]+[.!]/i) || raw.match(/errors[0-9]*([^!.\r\n]+[.!])/i);
               errors = match ? (match[1] || match[0]).trim() : `Security check failed (HTTP ${status})`;
             }
           } catch {}
@@ -148,6 +150,13 @@ export async function performLogin(options = {}) {
 
         if (errors) {
           console.log(`[x-login-api] Error: ${errors}`);
+          if (
+            errors.includes('not allowed to log in') ||
+            errors.includes('temporarily limited') ||
+            errors.includes('Suspended')
+          ) {
+            fatalSecurityError = errors;
+          }
           onProgress({
             event: 'api_error',
             stage: 'x_api_error',
@@ -247,6 +256,10 @@ export async function performLogin(options = {}) {
           authToken: authTokenCookie.value,
           ct0: ct0Cookie.value,
         };
+      }
+ 
+      if (fatalSecurityError) {
+        throw new Error(`X security check failed: ${fatalSecurityError}`);
       }
 
       // Automated assistance for input fields (runs safely in parallel with user)
