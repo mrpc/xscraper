@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
+import path from 'node:path';
 
 let sharedBrowser = null;
 let isLaunching = false;
@@ -88,6 +89,8 @@ export async function getBrowser(customOptions = {}) {
 export async function launchDedicatedBrowser(customOptions = {}) {
   const executablePath = customOptions.executablePath || findChromiumPath();
   const isHeadless = customOptions.headless !== undefined ? customOptions.headless : false;
+  const dataDir = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
+  const userDataDir = customOptions.userDataDir || path.join(dataDir, 'chrome-profile');
 
   const args = [
     '--no-sandbox',
@@ -110,11 +113,13 @@ export async function launchDedicatedBrowser(customOptions = {}) {
   return await puppeteer.launch({
     executablePath,
     headless: isHeadless,
+    userDataDir,
     ignoreDefaultArgs: ['--enable-automation'],
     args,
     defaultViewport: isHeadless ? { width: 1280, height: 850 } : null,
   });
 }
+
 
 
 
